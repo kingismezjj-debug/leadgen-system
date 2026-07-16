@@ -2990,18 +2990,257 @@ td span {
 }
 
 @media (max-width: 560px) {
+  body {
+    background: var(--ui-bg);
+  }
+
+  button,
+  a.download-button {
+    min-height: 44px;
+  }
+
+  .app-layout {
+    width: 100%;
+  }
+
+  .app-shell {
+    padding: 12px 10px 28px;
+  }
+
+  .settings-sidebar {
+    margin: 0 10px 10px;
+    padding: 10px;
+  }
+
+  .settings-sidebar-compact {
+    gap: 8px;
+  }
+
+  .settings-header {
+    margin-bottom: 8px;
+  }
+
+  .settings-tag {
+    min-height: 46px;
+    padding: 9px 10px;
+  }
+
+  .settings-tag small {
+    display: none;
+  }
+
+  .topbar {
+    display: grid;
+    gap: 10px;
+    min-height: 0;
+    padding-bottom: 12px;
+  }
+
+  .topbar h1 {
+    font-size: 24px;
+    line-height: 1.12;
+  }
+
+  .topbar-controls,
+  .status-row {
+    width: 100%;
+  }
+
+  .status-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 44px;
+    gap: 6px;
+  }
+
+  .pill {
+    justify-content: flex-start;
+    min-width: 0;
+    padding: 0 8px;
+    font-size: 11px;
+  }
+
+  .pill svg {
+    flex: 0 0 auto;
+  }
+
+  .auth-panel {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .auth-panel button {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
   .metrics,
   .inline-fields {
     grid-template-columns: 1fr;
+  }
+
+  .metrics {
+    gap: 8px;
+    margin: 12px 0;
+  }
+
+  .metric {
+    padding: 12px;
   }
 
   .metric strong {
     font-size: 23px;
   }
 
-  .lead-library-actions {
-    flex-direction: column;
+  .workspace-grid {
+    gap: 12px;
+  }
+
+  .panel,
+  .table-section,
+  .task-section,
+  .send-log-section,
+  .settings-detail {
+    padding: 12px;
+  }
+
+  .search-field-header,
+  .section-header,
+  .lead-library-heading,
+  .email-draft-head,
+  .delete-dialog-header,
+  .settings-detail-header {
     align-items: stretch;
+    flex-direction: column;
+  }
+
+  .ai-analysis-button,
+  .email-draft-head .primary-small,
+  .settings-detail-header .primary-small {
+    width: 100%;
+  }
+
+  .segmented-control {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .area-popover,
+  .country-popover {
+    position: fixed;
+    inset: auto 10px 12px;
+    z-index: 40;
+    max-height: min(72vh, 620px);
+    overflow: auto;
+  }
+
+  .area-picker-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .country-trigger {
+    gap: 8px;
+  }
+
+  .country-trigger span:first-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .email-ai-panel {
+    padding: 10px;
+  }
+
+  .email-draft-card {
+    padding: 10px;
+  }
+
+  .rich-mail-toolbar {
+    display: grid;
+    grid-template-columns: 1fr 84px 44px;
+    gap: 6px;
+  }
+
+  .rich-mail-toolbar select,
+  .rich-mail-color {
+    width: 100%;
+    min-height: 38px;
+  }
+
+  .rich-mail-tools {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 5px;
+  }
+
+  .rich-tool-button {
+    width: 100%;
+    min-height: 38px;
+  }
+
+  .rich-mail-editor {
+    min-height: 260px;
+    max-height: 58vh;
+    padding: 12px;
+    font-size: 15px;
+  }
+
+  .campaign-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .campaign-actions .toggle {
+    width: 100%;
+    min-height: 44px;
+    margin: 0;
+    justify-content: center;
+  }
+
+  .translation-menu {
+    left: 0;
+    right: 0;
+    width: 100%;
+  }
+
+  .email-preview {
+    padding: 10px;
+  }
+
+  .email-preview > div {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .email-preview-frame {
+    min-height: 220px;
+  }
+
+  .lead-library-heading {
+    width: 100%;
+    gap: 10px;
+  }
+
+  .lead-tabs {
+    width: 100%;
+    margin-right: -2px;
+    padding-bottom: 6px;
+  }
+
+  .lead-tab {
+    min-height: 36px;
+  }
+
+  .lead-library-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+    align-items: stretch;
+    gap: 8px;
   }
 
   .lead-library-actions button,
@@ -3009,8 +3248,115 @@ td span {
     width: 100%;
   }
 
-  .auth-panel {
-    flex-wrap: wrap;
+  .table-wrap {
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+
+  .table-wrap table,
+  .table-wrap thead,
+  .table-wrap tbody,
+  .table-wrap tr,
+  .table-wrap td {
+    display: block;
+  }
+
+  .table-wrap table {
+    min-width: 0;
+    border-collapse: separate;
+  }
+
+  .table-wrap thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .table-wrap tbody {
+    display: grid;
+    gap: 10px;
+  }
+
+  .table-wrap tr {
+    border: 1px solid var(--ui-line);
+    border-radius: 10px;
+    padding: 12px;
+    background: #ffffff;
+    box-shadow: 0 8px 20px rgba(28, 38, 32, 0.04);
+  }
+
+  .table-wrap td {
+    border: 0;
+    padding: 9px 0;
+    font-size: 13px;
+  }
+
+  .table-wrap td + td {
+    border-top: 1px solid #edf1ed;
+  }
+
+  .table-wrap td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 5px;
+    color: var(--ui-muted);
+    font-size: 11px;
+    font-weight: 850;
+  }
+
+  .table-wrap td[data-label="商户"] {
+    padding-top: 0;
+  }
+
+  .table-wrap td[data-label="商户"]::before,
+  .table-wrap td.empty-state::before {
+    display: none;
+  }
+
+  .table-wrap td[data-label="商户"] strong {
+    font-size: 16px;
+    line-height: 1.25;
+  }
+
+  .table-wrap td[data-label="操作"] {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 7px;
+    padding-bottom: 0;
+  }
+
+  .table-wrap td[data-label="操作"]::before {
+    margin-bottom: 0;
+  }
+
+  .table-wrap .mini-button {
+    width: 100%;
+    min-height: 40px;
+  }
+
+  .email-quality-row {
+    align-items: flex-start;
+    gap: 5px;
+  }
+
+  .email-source-link {
+    margin-top: 4px;
+  }
+
+  .waterfall-summary {
+    gap: 4px;
+  }
+
+  .empty-state {
+    display: grid;
+    min-height: 120px;
+    place-items: center;
+    height: auto;
+    padding: 18px 8px;
+    text-align: center;
   }
 
   .task-header-actions {
@@ -3020,6 +3366,51 @@ td span {
 
   .task-header-actions button {
     flex: 1 1 0;
+  }
+
+  .task-card-top,
+  .send-log-main,
+  .send-log-meta {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .delete-dialog {
+    max-height: calc(100vh - 24px);
+    overflow: auto;
+    padding: 14px;
+  }
+
+  .delete-dialog-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .delete-option {
+    min-height: 58px;
+  }
+}
+
+@media (max-width: 380px) {
+  .app-shell {
+    padding-inline: 8px;
+  }
+
+  .status-row,
+  .lead-library-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .status-row .icon-button {
+    width: 100%;
+  }
+
+  .rich-mail-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .rich-mail-tools {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 

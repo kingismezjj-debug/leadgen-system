@@ -2379,12 +2379,12 @@ function App() {
             <tbody>
               {filteredLeads.map((lead) => (
                 <tr key={lead.id}>
-                  <td>
+                  <td data-label="商户">
                     <strong>{lead.name}</strong>
                     {lead.website && <a href={lead.website} target="_blank" rel="noreferrer">{lead.website.replace(/^https?:\/\//, '')}</a>}
                   </td>
-                  <td>{lead.companyType || '-'}</td>
-                  <td>
+                  <td data-label="类型">{lead.companyType || '-'}</td>
+                  <td data-label="联系">
                     <span><Phone size={14} /> {lead.phone || '-'}</span>
                     {Array.isArray(lead.emails) && lead.emails.length ? (
                       <div className="email-quality-list">
@@ -2425,9 +2425,9 @@ function App() {
                       </div>
                     )}
                   </td>
-                  <td>{lead.address || '-'}</td>
-                  <td>{lead.rating ? `${lead.rating} (${lead.reviewCount})` : '-'}</td>
-                  <td>
+                  <td data-label="地址">{lead.address || '-'}</td>
+                  <td data-label="评分">{lead.rating ? `${lead.rating} (${lead.reviewCount})` : '-'}</td>
+                  <td data-label="操作">
                     <button
                       className="mini-button"
                       onClick={() => enrichLeadWaterfall(lead)}
