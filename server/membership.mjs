@@ -140,9 +140,8 @@ export function serializeMembershipState({ user = null, usage = [], membershipEn
 
 export async function getMembershipState(user = null) {
   const store = await readStore();
-  const membershipEnabled = (store.users || []).length > 0;
   return serializeMembershipState({
-    membershipEnabled,
+    membershipEnabled: true,
     user,
     usage: user ? getUsageSummaryForUser(store, user) : []
   });

@@ -5,7 +5,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-test('optional admin token keeps health public and protects API data', async (t) => {
+test('optional admin token keeps health public and membership login protects API data', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'leadgen-auth-'));
   const storePath = join(directory, 'store.json');
   const settingsPath = join(directory, 'settings.json');
@@ -68,7 +68,27 @@ test('optional admin token keeps health public and protects API data', async (t)
   const authorizedResponse = await fetch(`${baseUrl}/api/leads`, {
     headers: { Authorization: `Bearer ${token}` }
   });
-  assert.equal(authorizedResponse.status, 200);
-  const payload = await authorizedResponse.json();
+  assert.equal(authorizedResponse.status, 401);
+  assert.deepEqual(await authorizedResponse.json(), { error: 'Please login first.' });
+
+  const registerResponse = await fetch(`${baseUrl}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'owner@example.test', password: 'password123' })
+  });
+  assert.equal(registerResponse.status, 200);
+  const registered = await registerResponse.json();
+  assert.equal(registered.membershipEnabled, true);
+  assert.equal(registered.user.role, 'super_admin');
+  assert.ok(registered.token);
+
+  const loggedInResponse = await fetch(`${baseUrl}/api/leads`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'X-Leadgen-Session-Token': registered.token
+    }
+  });
+  assert.equal(loggedInResponse.status, 200);
+  const payload = await loggedInResponse.json();
   assert.deepEqual(payload.leads, []);
 });

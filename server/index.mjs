@@ -129,9 +129,7 @@ function requireAdminToken(req, res, next) {
 
 async function attachMembership(req, res, next) {
   try {
-    const store = await readStore();
-    req.membershipEnabled = (store.users || []).length > 0;
-    if (!req.membershipEnabled) return next();
+    req.membershipEnabled = true;
     const token = getSessionTokenFromRequest(req);
     const user = await findUserBySessionToken(token);
     if (!user) return res.status(401).json({ error: 'Please login first.' });
@@ -150,6 +148,23 @@ function requireAdminRole(req, _res, next) {
   } catch (error) {
     next(error);
   }
+}
+
+function canManageGlobalApiSettings(user) {
+  return ['super_admin', 'admin'].includes(user?.role || '');
+}
+
+function settingsInputForUser(input = {}, user = null) {
+  if (canManageGlobalApiSettings(user)) return input;
+  const next = { ...input };
+  delete next.googleMapsApiKey;
+  delete next.googleTranslateApiKey;
+  delete next.yelpApiKey;
+  delete next.foursquareApiKey;
+  delete next.hunterApiKey;
+  delete next.placesLanguageCode;
+  delete next.placesRegionCode;
+  return next;
 }
 
 function normalizeEmailDiscoveryDepth(value) {
@@ -345,7 +360,7 @@ app.get('/api/settings', asyncHandler(async (_req, res) => {
 }));
 
 app.post('/api/settings', asyncHandler(async (req, res) => {
-  res.json({ settings: await saveClientSettings(req.body || {}) });
+  res.json({ settings: await saveClientSettings(settingsInputForUser(req.body || {}, req.user)) });
 }));
 
 app.post('/api/email/test-smtp', asyncHandler(async (_req, res) => {

@@ -49,9 +49,21 @@ test('API rejects malformed lead updates, enforces campaign limits, and blocks u
     await rm(directory, { recursive: true, force: true });
   });
 
-  const invalidUpdate = await fetch(`${baseUrl}/api/leads/lead-0`, {
+  const registerResponse = await fetch(`${baseUrl}/api/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'owner@example.test', password: 'password123' })
+  });
+  assert.equal(registerResponse.status, 200);
+  const registered = await registerResponse.json();
+  const authHeaders = {
+    'Content-Type': 'application/json',
+    'X-Leadgen-Session-Token': registered.token
+  };
+
+  const invalidUpdate = await fetch(`${baseUrl}/api/leads/lead-0`, {
+    method: 'POST',
+    headers: authHeaders,
     body: JSON.stringify({ emails: 'not-an-array' })
   });
   assert.equal(invalidUpdate.status, 400);
@@ -61,7 +73,7 @@ test('API rejects malformed lead updates, enforces campaign limits, and blocks u
 
   const previewResponseOnly = await fetch(`${baseUrl}/api/campaigns/preview`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders,
     body: JSON.stringify({ subject: 'Preview', body: 'Preview body' })
   });
   assert.equal(previewResponseOnly.status, 200);
@@ -74,7 +86,7 @@ test('API rejects malformed lead updates, enforces campaign limits, and blocks u
 
   const translateResponse = await fetch(`${baseUrl}/api/email/translate`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders,
     body: JSON.stringify({ subject: 'Hi', body: 'Body', targetLanguage: 'en' })
   });
   const translatePayload = await translateResponse.json();
@@ -84,7 +96,7 @@ test('API rejects malformed lead updates, enforces campaign limits, and blocks u
   const leadIds = store.leads.map((lead) => lead.id);
   const previewResponse = await fetch(`${baseUrl}/api/campaigns/send`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders,
     body: JSON.stringify({ subject: 'Test', body: 'Test', dryRun: true, leadIds })
   });
   const preview = await previewResponse.json();
@@ -94,7 +106,7 @@ test('API rejects malformed lead updates, enforces campaign limits, and blocks u
 
   const deliveryResponse = await fetch(`${baseUrl}/api/campaigns/send`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders,
     body: JSON.stringify({ subject: 'Test', body: 'Test', dryRun: false, leadIds })
   });
   const delivery = await deliveryResponse.json();

@@ -799,7 +799,7 @@ function App() {
   const [adminToken, setAdminToken] = useState(getSessionAdminToken);
   const [authMessage, setAuthMessage] = useState('');
   const [settingsMessage, setSettingsMessage] = useState('');
-  const [authState, setAuthState] = useState<AuthState>({ membershipEnabled: false, user: null, plans: {}, usage: [] });
+  const [authState, setAuthState] = useState<AuthState>({ membershipEnabled: true, user: null, plans: {}, usage: [] });
   const [authLoaded, setAuthLoaded] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [authForm, setAuthForm] = useState({ name: '', email: '', password: '' });
@@ -936,6 +936,7 @@ function App() {
     return '';
   }, [dryRun, health?.emailIssues, health?.emailReady, leadsWithEmail.length, recipientInput]);
   const sendActionDisabled = busy === 'send' || busy === 'preview' || busy === 'translate' || Boolean(sendDisabledReason);
+  const canManageGlobalApiSettings = ['super_admin', 'admin'].includes(authState.user?.role || '');
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -975,6 +976,12 @@ function App() {
       setActiveLeadKeyword('all');
     }
   }, [activeLeadKeyword, leadKeywordTabs]);
+
+  useEffect(() => {
+    if (!canManageGlobalApiSettings && ['google', 'translate'].includes(activeSettingsView)) {
+      setActiveSettingsView('workspace');
+    }
+  }, [activeSettingsView, canManageGlobalApiSettings]);
 
   useEffect(() => {
     if (restoredTranslatedKeywordRef.current) {
@@ -1681,7 +1688,7 @@ function App() {
     }
   }
 
-  if (authLoaded && authState.membershipEnabled && !authState.user) {
+  if (authLoaded && !authState.user) {
     return (
       <AuthGate
         mode={authMode}
@@ -1711,7 +1718,7 @@ function App() {
       <header className="topbar">
         <div>
           <p className="eyebrow">Leadgen System</p>
-          <h1>Google Maps 获客工作台</h1>
+          <h1>获客工作台</h1>
         </div>
         <div className="topbar-controls">
           <div className="status-row">
@@ -2797,7 +2804,7 @@ function SettingsSidebar({
   setActiveSettingsView: React.Dispatch<React.SetStateAction<SettingsView>>;
   authState: AuthState;
 }) {
-  const canManageApiSettings = !authState.membershipEnabled || ['super_admin', 'admin'].includes(authState.user?.role || '');
+  const canManageApiSettings = ['super_admin', 'admin'].includes(authState.user?.role || '');
   const updateSettings = (patch: Partial<SettingsPayload>) => {
     setSettings((current) => ({ ...current, ...patch }));
   };
@@ -2873,7 +2880,7 @@ function SettingsSidebar({
         <ShieldCheck size={17} />
         <span>
           <strong>会员与权限</strong>
-          <small>{authState.user ? `${authState.user.plan} · ${authState.user.role}` : authState.membershipEnabled ? '未登录' : '未启用'}</small>
+          <small>{authState.user ? `${authState.user.plan} · ${authState.user.role}` : '未登录'}</small>
         </span>
       </button>
 
