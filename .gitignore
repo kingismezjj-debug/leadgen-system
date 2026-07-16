@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.runtime-logs/
+
+*.log
+*.tsbuildinfo
+
+.env
+.env.*
+!.env.example
+
+server/data/
