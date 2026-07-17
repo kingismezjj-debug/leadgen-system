@@ -12,6 +12,13 @@ const MAX_DISCOVERY_DEPTH = 3;
 const MAX_REDIRECTS = 5;
 const MAX_HTML_BYTES = 5 * 1024 * 1024;
 const MAX_EMAILS_PER_SITE = 25;
+const DEFAULT_DISCOVERY_TIMEOUT_MS = 12000;
+const RETRY_DISCOVERY_TIMEOUT_MS = 18000;
+const DISCOVERY_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8'
+};
 const PUBLIC_EMAIL_DOMAINS = new Set([
   'gmail.com',
   'googlemail.com',
@@ -503,7 +510,7 @@ export async function fetchHtmlDetails(url, signal) {
     const response = await fetch(currentUrl, {
       signal,
       redirect: 'manual',
-      headers: { 'User-Agent': 'LeadgenSystem/0.1 contact-discovery' }
+      headers: DISCOVERY_HEADERS
     });
 
     if ([301, 302, 303, 307, 308].includes(response.status)) {
@@ -556,6 +563,28 @@ export async function fetchHtmlDetails(url, signal) {
   return { ok: false, url: currentUrl.href, reason: discoveryReason('website_unreachable') };
 }
 
+function isAbortError(error) {
+  return error?.name === 'AbortError';
+}
+
+async function fetchHtmlDetailsWithTimeout(url, timeoutMs) {
+  const attempts = [timeoutMs, Math.max(RETRY_DISCOVERY_TIMEOUT_MS, timeoutMs)];
+  let lastError = null;
+  for (const attemptTimeout of attempts) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), attemptTimeout);
+    try {
+      return await fetchHtmlDetails(url, controller.signal);
+    } catch (error) {
+      lastError = error;
+      if (!isAbortError(error)) throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw lastError || Object.assign(new Error('aborted'), { name: 'AbortError' });
+}
+
 function buildEmailDiscoveryResult({
   emails,
   sourceMap,
@@ -581,7 +610,7 @@ function buildEmailDiscoveryResult({
   };
 }
 
-export async function discoverEmailDetails(website, { timeoutMs = 7000, maxDepth = 1, maxPages = MAX_PAGES } = {}) {
+export async function discoverEmailDetails(website, { timeoutMs = DEFAULT_DISCOVERY_TIMEOUT_MS, maxDepth = 1, maxPages = MAX_PAGES } = {}) {
   const depth = normalizeDiscoveryDepth(maxDepth);
   if (!website) {
     return buildEmailDiscoveryResult({
@@ -648,9 +677,6 @@ export async function discoverEmailDetails(website, { timeoutMs = 7000, maxDepth
   if (depth >= 1) {
     for (const path of CANDIDATE_PATHS.filter((item) => item !== '/')) enqueue(path, 1);
   }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
   try {
     while (queue.length && visited.size < pageLimit) {
       const { path, depth: currentDepth } = queue.shift();
@@ -661,7 +687,15 @@ export async function discoverEmailDetails(website, { timeoutMs = 7000, maxDepth
       pagesAttempted += 1;
       checkedUrls.push(url.href);
 
-      const fetched = await fetchHtmlDetails(url, controller.signal);
+      let fetched;
+      try {
+        fetched = await fetchHtmlDetailsWithTimeout(url, timeoutMs);
+      } catch (error) {
+        lastReason = isAbortError(error)
+          ? discoveryReason('timeout', { url: url.href })
+          : discoveryReason('website_unreachable', { detail: error instanceof Error ? error.message : '', url: url.href });
+        continue;
+      }
       if (!fetched.ok) {
         lastReason = fetched.reason || lastReason;
         continue;
@@ -698,8 +732,6 @@ export async function discoverEmailDetails(website, { timeoutMs = 7000, maxDepth
       contactFormFound,
       checkedUrls
     });
-  } finally {
-    clearTimeout(timer);
   }
 
   const reason = found.size

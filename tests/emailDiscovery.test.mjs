@@ -47,6 +47,39 @@ test('discoverEmailDetails keeps found emails even if a later page times out', a
   assert.equal(result.reason, null);
 });
 
+test('discoverEmailDetails keeps scanning candidate pages after a page timeout', async (t) => {
+  const previousFetch = global.fetch;
+  let homeAttempts = 0;
+  global.fetch = async (url) => {
+    const currentUrl = new URL(String(url));
+    if (currentUrl.pathname === '/') {
+      homeAttempts += 1;
+      throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+    }
+    if (currentUrl.pathname === '/contact') {
+      return new Response('<a href="mailto:sales@iana.org">Email</a>', {
+        status: 200,
+        headers: { 'Content-Type': 'text/html' }
+      });
+    }
+    return new Response('', { status: 404, headers: { 'Content-Type': 'text/html' } });
+  };
+
+  t.after(() => {
+    global.fetch = previousFetch;
+  });
+
+  const result = await discoverEmailDetails('https://iana.org', {
+    timeoutMs: 50,
+    maxDepth: 1,
+    maxPages: 3
+  });
+
+  assert.equal(homeAttempts, 2);
+  assert.deepEqual(result.emails, ['sales@iana.org']);
+  assert.equal(result.status, 'found');
+});
+
 test('extractMailtoEmails reads mailto hrefs and allows explicit public-provider contacts', () => {
   const html = `
     <a href="mailto:hello@acme.test?subject=Hi">Email</a>

@@ -92,7 +92,7 @@ function step(name, status, details = {}) {
 async function discoverFromWebsite(lead, options) {
   const result = await discoverEmailDetails(lead.website, {
     maxDepth: options.emailDiscoveryDepth ?? 1,
-    timeoutMs: options.timeoutMs ?? 7000
+    timeoutMs: options.timeoutMs ?? 12000
   });
   return {
     result,
@@ -108,7 +108,7 @@ async function discoverProfilesFromWebsite(lead, options) {
   const url = normalizeWebsite(lead.website);
   if (!url) return { socialProfiles: [], directoryProfiles: [], emails: [], emailSources: [], step: step('social_and_directory_links', 'skipped', { reason: 'missing_website' }) };
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 7000);
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 12000);
   try {
     const fetched = await fetchHtmlDetails(url.href, controller.signal);
     if (!fetched.ok) return { socialProfiles: [], directoryProfiles: [], emails: [], emailSources: [], step: step('social_and_directory_links', 'failed', { reason: fetched.reason?.label || 'fetch_failed' }) };
@@ -278,7 +278,7 @@ async function runAiResearch(lead, context, settings = {}) {
   };
 }
 
-export async function enrichLeadWaterfall(lead, { settings = {}, emailDiscoveryDepth = 1, timeoutMs = 7000, enableAiResearch = false } = {}) {
+export async function enrichLeadWaterfall(lead, { settings = {}, emailDiscoveryDepth = 1, timeoutMs = 12000, enableAiResearch = false } = {}) {
   const steps = [];
   const allEmails = new Set((lead.emails || []).map(normalizeEmail).filter(Boolean));
   const allSources = [...(lead.emailSources || [])];
