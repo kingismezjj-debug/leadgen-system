@@ -787,6 +787,10 @@ const defaultSettings: SettingsPayload = {
   emailDailyLimit: 25
 };
 
+function mergeClientSettings(settingsResult: SettingsPayload) {
+  return { ...defaultSettings, ...settingsResult, smtp: { ...defaultSettings.smtp, ...settingsResult.smtp } };
+}
+
 function App() {
   const savedSearchForm = useMemo(getSavedSearchForm, []);
   const savedSearchMode = isSearchMode(savedSearchForm.searchMode) ? savedSearchForm.searchMode : 'smart';
@@ -1054,8 +1058,10 @@ function App() {
       api<{ settings: SettingsPayload }>('/api/settings')
     ]);
     setPayload(storeResult);
-    const mergedSettings = { ...defaultSettings, ...settingsResult.settings, smtp: { ...defaultSettings.smtp, ...settingsResult.settings.smtp } };
-    setSettings(mergedSettings);
+    const mergedSettings = mergeClientSettings(settingsResult.settings);
+    if (activeSettingsView === 'workspace') {
+      setSettings(mergedSettings);
+    }
     if (sessionResult.user && ['super_admin', 'admin'].includes(sessionResult.user.role)) {
       const usersResult = await api<{ users: MembershipUser[] }>('/api/admin/users').catch(() => ({ users: [] }));
       setAdminUsers(usersResult.users);
@@ -1157,7 +1163,7 @@ function App() {
         method: 'POST',
         body: JSON.stringify(settings)
       });
-      setSettings({ ...defaultSettings, ...result.settings, smtp: { ...defaultSettings.smtp, ...result.settings.smtp } });
+      setSettings(mergeClientSettings(result.settings));
       setSettingsMessage('设置已保存');
       await refresh();
       if (returnToWorkspace) setActiveSettingsView('workspace');
@@ -1176,7 +1182,7 @@ function App() {
         method: 'POST',
         body: JSON.stringify(settings)
       });
-      setSettings({ ...defaultSettings, ...saved.settings, smtp: { ...defaultSettings.smtp, ...saved.settings.smtp } });
+      setSettings(mergeClientSettings(saved.settings));
       const result = await api<{ message: string }>('/api/email/test-smtp', { method: 'POST' });
       setSettingsMessage(result.message);
       await refresh();
