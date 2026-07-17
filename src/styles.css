@@ -1398,6 +1398,11 @@ select {
   box-shadow: 0 16px 36px rgba(0, 0, 0, 0.04);
 }
 
+.app-shell > .task-section,
+.app-shell > .send-log-section {
+  display: none;
+}
+
 .send-log-header {
   margin-bottom: 12px;
 }

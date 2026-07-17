@@ -103,7 +103,7 @@ type StorePayload = {
   sendLog: Array<{ id: string; leadId?: string; status: string; to?: string; reason?: string; at: string }>;
 };
 
-type SettingsView = 'workspace' | 'google' | 'translate' | 'ai' | 'email' | 'members';
+type SettingsView = 'workspace' | 'google' | 'translate' | 'ai' | 'email' | 'members' | 'tasks' | 'delivery';
 type MembershipUser = {
   id: string;
   email: string;
@@ -1776,6 +1776,7 @@ function App() {
           setSettings={setSettings}
           onSave={() => saveSettings(true)}
           onTestSmtp={testSmtpConnection}
+          busy={busy}
           saving={busy === 'settings'}
           testingSmtp={busy === 'smtp-test'}
           message={settingsMessage}
@@ -1788,6 +1789,14 @@ function App() {
           onLogout={logoutMembership}
           adminUsers={adminUsers}
           onUpdateUser={updateMembershipUser}
+          latestTasks={latestTasks}
+          latestSendLogs={latestSendLogs}
+          totalSendLogs={payload.sendLog.length}
+          onRefresh={refresh}
+          onClearFinishedTasks={clearFinishedTasks}
+          onRetryTask={retryTask}
+          onLoadCampaignTask={loadCampaignTask}
+          onClearSendLogs={clearSendLogs}
         />
       ) : (
       <>
@@ -2890,6 +2899,30 @@ function SettingsSidebar({
         </span>
       </button>
 
+      <button
+        type="button"
+        className={activeSettingsView === 'tasks' ? 'settings-tag active' : 'settings-tag'}
+        onClick={() => setActiveSettingsView('tasks')}
+      >
+        <RefreshCw size={17} />
+        <span>
+          <strong>执行任务</strong>
+          <small>任务进度</small>
+        </span>
+      </button>
+
+      <button
+        type="button"
+        className={activeSettingsView === 'delivery' ? 'settings-tag active' : 'settings-tag'}
+        onClick={() => setActiveSettingsView('delivery')}
+      >
+        <Send size={17} />
+        <span>
+          <strong>最近发送记录</strong>
+          <small>邮件投递</small>
+        </span>
+      </button>
+
       <button type="button" className="settings-back-link" onClick={() => setActiveSettingsView('workspace')}>
         返回工作台
       </button>
@@ -3024,12 +3057,162 @@ function SettingsSidebar({
   );
 }
 
+function TaskActivityPanel({
+  latestTasks,
+  busy,
+  onRefresh,
+  onClearFinished,
+  onRetryTask,
+  onLoadCampaignTask
+}: {
+  latestTasks: StorePayload['tasks'];
+  busy: string;
+  onRefresh: () => void;
+  onClearFinished: () => void;
+  onRetryTask: (taskId: string) => void;
+  onLoadCampaignTask: (task: StorePayload['tasks'][number]) => void;
+}) {
+  return (
+    <section className="task-section settings-embedded-section" aria-live="polite">
+      <div className="section-header task-section-header">
+        <div>
+          <p className="eyebrow">Tasks</p>
+          <h2>执行任务</h2>
+        </div>
+        <div className="task-header-actions">
+          <button type="button" className="task-refresh-button" onClick={onRefresh} disabled={busy === 'refresh'}>
+            <RefreshCw size={16} /> 刷新
+          </button>
+          <button type="button" className="task-refresh-button" onClick={onClearFinished} disabled={busy === 'clear-tasks'}>
+            <Trash2 size={16} /> {busy === 'clear-tasks' ? '清理中' : '清理完成'}
+          </button>
+        </div>
+      </div>
+      <div className="task-list">
+        {latestTasks.map((task) => {
+          const progress = Math.min(100, Math.max(0, Number(task.progress) || 0));
+          const contextSummary = formatTaskContext(task.context);
+          const taskIcon = task.kind === 'search'
+            ? <Search size={16} />
+            : task.kind === 'campaign-send'
+              ? <Send size={16} />
+              : task.kind === 'analysis'
+                ? <Sparkles size={16} />
+                : <RefreshCw size={16} />;
+
+          return (
+            <article className={`task-card ${task.status}`} key={task.id}>
+              <div className="task-card-top">
+                <div className="task-card-title">
+                  <span className="task-icon">{taskIcon}</span>
+                  <div>
+                    <strong>{getTaskKindLabel(task.kind)}</strong>
+                    <span>{task.title || getTaskKindLabel(task.kind)}</span>
+                  </div>
+                </div>
+                <span className={`task-status ${task.status}`}>{getTaskStatusLabel(task.status)}</span>
+              </div>
+              <div className="task-progress-row">
+                <progress value={progress} max={100} />
+                <span>{progress}%</span>
+              </div>
+              {(task.detail || task.error) && (
+                <p className={task.error ? 'task-detail task-error' : 'task-detail'}>
+                  {task.error || task.detail}
+                </p>
+              )}
+              <div className="task-meta">
+                <span>{formatTaskTime(task.updatedAt || task.createdAt)}</span>
+                {contextSummary && <span>{contextSummary}</span>}
+              </div>
+              {task.status === 'failed' && task.kind === 'search' && (
+                <div className="task-actions">
+                  <button
+                    type="button"
+                    className="task-retry-button"
+                    onClick={() => onRetryTask(task.id)}
+                    disabled={busy === `retry-task:${task.id}`}
+                  >
+                    <RefreshCw size={15} /> {busy === `retry-task:${task.id}` ? '重试中' : '重试搜索'}
+                  </button>
+                </div>
+              )}
+              {task.kind === 'campaign-send' && (
+                <div className="task-actions">
+                  <button
+                    type="button"
+                    className="task-retry-button"
+                    onClick={() => onLoadCampaignTask(task)}
+                  >
+                    <Mail size={15} /> 载入邮件
+                  </button>
+                </div>
+              )}
+            </article>
+          );
+        })}
+        {!latestTasks.length && (
+          <div className="task-empty">
+            开始搜索、AI 分析或发送邮件后，这里会显示每个任务的进度和失败原因。
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function DeliveryLogPanel({
+  latestSendLogs,
+  totalSendLogs,
+  busy,
+  onClearSendLogs
+}: {
+  latestSendLogs: StorePayload['sendLog'];
+  totalSendLogs: number;
+  busy: string;
+  onClearSendLogs: () => void;
+}) {
+  return (
+    <section className="send-log-section settings-embedded-section">
+      <div className="section-header send-log-header">
+        <div>
+          <p className="eyebrow">Delivery</p>
+          <h2>最近发送记录</h2>
+        </div>
+        <button type="button" className="task-refresh-button" onClick={onClearSendLogs} disabled={busy === 'clear-send-log' || !totalSendLogs}>
+          <Trash2 size={16} /> {busy === 'clear-send-log' ? '清理中' : '清理记录'}
+        </button>
+      </div>
+      <div className="send-log-list">
+        {latestSendLogs.map((entry) => (
+          <article className={`send-log-card ${entry.status}`} key={entry.id}>
+            <div className="send-log-main">
+              <span className={`send-log-status ${entry.status}`}>{getSendStatusLabel(entry.status)}</span>
+              <strong>{entry.to || entry.leadId || '未指定收件人'}</strong>
+            </div>
+            <div className="send-log-meta">
+              <span>{formatTaskTime(entry.at)}</span>
+              {(entry.reason || entry.status === 'skipped') && <span>{getSendReasonLabel(entry.reason)}</span>}
+            </div>
+          </article>
+        ))}
+        {!latestSendLogs.length && (
+          <div className="send-log-empty">
+            真实发送、预演或跳过记录会显示在这里，方便排查失败原因。
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function SettingsDetailView({
   view,
   settings,
   setSettings,
   onSave,
   onTestSmtp,
+  busy,
   saving,
   testingSmtp,
   message,
@@ -3041,13 +3224,22 @@ function SettingsDetailView({
   onAuthSubmit,
   onLogout,
   adminUsers,
-  onUpdateUser
+  onUpdateUser,
+  latestTasks,
+  latestSendLogs,
+  totalSendLogs,
+  onRefresh,
+  onClearFinishedTasks,
+  onRetryTask,
+  onLoadCampaignTask,
+  onClearSendLogs
 }: {
   view: Exclude<SettingsView, 'workspace'>;
   settings: SettingsPayload;
   setSettings: React.Dispatch<React.SetStateAction<SettingsPayload>>;
   onSave: () => void;
   onTestSmtp: () => void;
+  busy: string;
   saving: boolean;
   testingSmtp: boolean;
   message: string;
@@ -3060,6 +3252,14 @@ function SettingsDetailView({
   onLogout: () => void;
   adminUsers: MembershipUser[];
   onUpdateUser: (userId: string, patch: Partial<MembershipUser>) => void;
+  latestTasks: StorePayload['tasks'];
+  latestSendLogs: StorePayload['sendLog'];
+  totalSendLogs: number;
+  onRefresh: () => void;
+  onClearFinishedTasks: () => void;
+  onRetryTask: (taskId: string) => void;
+  onLoadCampaignTask: (task: StorePayload['tasks'][number]) => void;
+  onClearSendLogs: () => void;
 }) {
   const updateSettings = (patch: Partial<SettingsPayload>) => {
     setSettings((current) => ({ ...current, ...patch }));
@@ -3073,9 +3273,9 @@ function SettingsDetailView({
       <div className="settings-detail-header">
         <div>
           <p className="eyebrow">Settings</p>
-          <h2>{view === 'google' ? 'Google Maps API Key' : view === 'translate' ? 'Google Translate API Key' : view === 'ai' ? 'AI关键词分析' : view === 'members' ? '会员与权限' : '邮箱自动化设置'}</h2>
+          <h2>{view === 'google' ? 'Google Maps API Key' : view === 'translate' ? 'Google Translate API Key' : view === 'ai' ? 'AI关键词分析' : view === 'members' ? '会员与权限' : view === 'tasks' ? '执行任务' : view === 'delivery' ? '最近发送记录' : '邮箱自动化设置'}</h2>
         </div>
-        {view !== 'members' && (
+        {!['members', 'tasks', 'delivery'].includes(view) && (
           <button className="primary-small" onClick={onSave} disabled={saving}>
             <Check size={18} /> {saving ? '保存中' : '保存并返回'}
           </button>
@@ -3095,6 +3295,22 @@ function SettingsDetailView({
           onLogout={onLogout}
           adminUsers={adminUsers}
           onUpdateUser={onUpdateUser}
+        />
+      ) : view === 'tasks' ? (
+        <TaskActivityPanel
+          latestTasks={latestTasks}
+          busy={busy}
+          onRefresh={onRefresh}
+          onClearFinished={onClearFinishedTasks}
+          onRetryTask={onRetryTask}
+          onLoadCampaignTask={onLoadCampaignTask}
+        />
+      ) : view === 'delivery' ? (
+        <DeliveryLogPanel
+          latestSendLogs={latestSendLogs}
+          totalSendLogs={totalSendLogs}
+          busy={busy}
+          onClearSendLogs={onClearSendLogs}
         />
       ) : view === 'google' ? (
         <div className="settings-detail-grid compact">
