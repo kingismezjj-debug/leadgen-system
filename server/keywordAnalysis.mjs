@@ -66,21 +66,29 @@ function normalizeKeywords(value) {
   return Array.from(new Set(text.split(/[,;\n，；]+/).map((item) => item.trim()).filter(Boolean))).slice(0, 20);
 }
 
+function normalizeList(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    return value.split(/[,;\n，；]+/).map((item) => item.trim()).filter(Boolean);
+  }
+  return [];
+}
+
 function normalizeStrategy(strategy) {
   const normalizeSupportedPlaceType = (value) => {
     const normalized = normalizePlaceType(value);
     return supportedPlaceTypeSet.has(normalized) ? normalized : '';
   };
-  const placeTypes = Array.from(new Set((strategy.placeTypes || [])
+  const placeTypes = Array.from(new Set(normalizeList(strategy.placeTypes)
     .map(normalizeSupportedPlaceType)
     .filter(Boolean)))
     .slice(0, 6);
   const primaryPlaceType = normalizeSupportedPlaceType(strategy.primaryPlaceType) || placeTypes[0] || '';
-  const searchKeywords = Array.from(new Set((strategy.searchKeywords || [])
+  const searchKeywords = Array.from(new Set(normalizeList(strategy.searchKeywords)
     .map((item) => String(item || '').trim())
     .filter(Boolean)))
     .slice(0, 12);
-  const searchBatches = (strategy.searchBatches || []).map((batch, index) => ({
+  const searchBatches = normalizeList(strategy.searchBatches).map((batch, index) => ({
     label: String(batch.label || searchKeywords[index] || `策略 ${index + 1}`).trim().slice(0, 80),
     keyword: String(batch.keyword || searchKeywords[index] || '').trim().slice(0, 120),
     placeType: normalizeSupportedPlaceType(batch.placeType) || primaryPlaceType,
@@ -94,11 +102,11 @@ function normalizeStrategy(strategy) {
     primaryPlaceType,
     placeTypes,
     searchKeywords,
-    negativeKeywords: Array.from(new Set((strategy.negativeKeywords || [])
+    negativeKeywords: Array.from(new Set(normalizeList(strategy.negativeKeywords)
       .map((item) => String(item || '').trim())
       .filter(Boolean))).slice(0, 12),
     searchBatches,
-    notes: (strategy.notes || []).map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8)
+    notes: normalizeList(strategy.notes).map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8)
   };
 }
 

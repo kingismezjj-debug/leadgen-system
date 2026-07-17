@@ -56,3 +56,34 @@ test('keyword analysis parses chat-completions output without executing a search
   assert.deepEqual(result.placeTypes, ['phone_repair_shop']);
   assert.equal(result.searchBatches[0].keyword, 'phone repair store');
 });
+
+test('keyword analysis tolerates GLM string fields where arrays are expected', async () => {
+  const fakeFetch = async () => new Response(JSON.stringify({
+    choices: [{
+      message: {
+        content: JSON.stringify({
+          customerProfile: 'repair shops and phone accessory sellers',
+          productIntent: 'buy phone LCD replacement parts',
+          recommendedMode: 'smart',
+          primaryPlaceType: 'cell_phone_store',
+          placeTypes: 'cell_phone_store, electronics_store',
+          searchKeywords: 'phone repair store, phone accessories store',
+          negativeKeywords: 'LCD TV, screen printing',
+          searchBatches: [],
+          notes: 'GLM may return this field as a string instead of an array.'
+        })
+      }
+    }]
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+  const result = await analyzeKeywords({
+    keywords: 'LCD, phone repair store',
+    apiKey: 'test-key',
+    baseUrl: 'https://api.z.ai/api/paas/v4',
+    fetchImpl: fakeFetch
+  });
+
+  assert.deepEqual(result.placeTypes, ['cell_phone_store', 'electronics_store']);
+  assert.deepEqual(result.negativeKeywords, ['LCD TV', 'screen printing']);
+  assert.equal(result.notes[0], 'GLM may return this field as a string instead of an array.');
+});
