@@ -3159,7 +3159,7 @@ function SettingsDetailView({
       ) : view === 'ai' ? (
         <div className="settings-detail-grid compact">
           <section className="settings-section">
-            <h3>OpenAI API</h3>
+            <h3>OpenAI / GLM API</h3>
             <label>
               API Key
               <input
@@ -3174,7 +3174,7 @@ function SettingsDetailView({
               <input
                 value={settings.openAiBaseUrl}
                 onChange={(event) => updateSettings({ openAiBaseUrl: event.target.value })}
-                placeholder="https://api.openai.com/v1"
+                placeholder="https://api.z.ai/api/paas/v4"
               />
             </label>
             <label>
@@ -3182,7 +3182,7 @@ function SettingsDetailView({
               <input
                 value={settings.openAiModel}
                 onChange={(event) => updateSettings({ openAiModel: event.target.value })}
-                placeholder="gpt-4.1-mini"
+                placeholder="glm-4-flash / glm-5.2"
               />
             </label>
             <label>

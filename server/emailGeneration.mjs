@@ -12,6 +12,11 @@ function normalizeText(value, maxLength = 1200) {
 }
 
 function extractOutputText(payload) {
+  const chatContent = payload.choices?.[0]?.message?.content;
+  if (typeof chatContent === 'string') return chatContent;
+  if (Array.isArray(chatContent)) {
+    return chatContent.map((item) => item.text || '').join('').trim();
+  }
   if (typeof payload.output_text === 'string') return payload.output_text;
   for (const item of payload.output || []) {
     for (const content of item.content || []) {
@@ -19,6 +24,18 @@ function extractOutputText(payload) {
     }
   }
   return '';
+}
+
+function parseJsonObject(text) {
+  const normalized = String(text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim();
+  try {
+    return JSON.parse(normalized);
+  } catch {
+    const start = normalized.indexOf('{');
+    const end = normalized.lastIndexOf('}');
+    if (start >= 0 && end > start) return JSON.parse(normalized.slice(start, end + 1));
+    throw new Error('AI email generation returned invalid JSON.');
+  }
 }
 
 function normalizeDrafts(payload) {
@@ -51,7 +68,7 @@ export async function generateEmailDrafts({
   if (!apiKey) throw badRequest('缺少 OpenAI API Key，请先在“AI关键词分析”设置中配置。');
 
   const normalizedBaseUrl = String(baseUrl || defaultOpenAiBaseUrl).trim().replace(/\/+$/, '');
-  const response = await fetchImpl(`${normalizedBaseUrl}/responses`, {
+  const response = await fetchImpl(`${normalizedBaseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -59,64 +76,31 @@ export async function generateEmailDrafts({
     },
     body: JSON.stringify({
       model,
-      input: [
+      messages: [
         {
           role: 'system',
-          content: [{
-            type: 'input_text',
-            text: [
-              'You write concise B2B cold outreach email drafts.',
-              'Return only compact JSON matching the schema.',
-              'Generate 3 distinct versions.',
-              'Use {{name}} as the recipient business placeholder when useful.',
-              'Do not include unsubscribe text; the system appends compliance footer separately.',
-              'Keep the tone professional, specific, and not spammy.'
-            ].join('\n')
-          }]
+          content: [
+            'You write concise B2B cold outreach email drafts.',
+            'Return only compact JSON, without markdown fences.',
+            'Return an object with one key named drafts.',
+            'Generate 3 distinct versions.',
+            'Each draft must contain angle, subject, body, and htmlBody.',
+            'Use {{name}} as the recipient business placeholder when useful.',
+            'Do not include unsubscribe text; the system appends compliance footer separately.',
+            'Keep the tone professional, specific, and not spammy.'
+          ].join('\n')
         },
         {
           role: 'user',
-          content: [{
-            type: 'input_text',
-            text: JSON.stringify({
-              keywords: prompt,
-              country: normalizeText(country, 120),
-              region: normalizeText(region, 160),
-              audience: normalizeText(audience, 300)
-            })
-          }]
+          content: JSON.stringify({
+            keywords: prompt,
+            country: normalizeText(country, 120),
+            region: normalizeText(region, 160),
+            audience: normalizeText(audience, 300)
+          })
         }
       ],
-      text: {
-        format: {
-          type: 'json_schema',
-          name: 'email_drafts',
-          strict: true,
-          schema: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              drafts: {
-                type: 'array',
-                minItems: 3,
-                maxItems: 5,
-                items: {
-                  type: 'object',
-                  additionalProperties: false,
-                  properties: {
-                    angle: { type: 'string' },
-                    subject: { type: 'string' },
-                    body: { type: 'string' },
-                    htmlBody: { type: 'string' }
-                  },
-                  required: ['angle', 'subject', 'body', 'htmlBody']
-                }
-              }
-            },
-            required: ['drafts']
-          }
-        }
-      }
+      temperature: 0.4
     })
   });
 
@@ -128,7 +112,7 @@ export async function generateEmailDrafts({
 
   const outputText = extractOutputText(payload);
   if (!outputText) throw Object.assign(new Error('AI 邮件生成返回内容为空。'), { status: 502 });
-  const drafts = normalizeDrafts(JSON.parse(outputText));
+  const drafts = normalizeDrafts(parseJsonObject(outputText));
   if (!drafts.length) throw Object.assign(new Error('AI 邮件生成没有返回可用版本。'), { status: 502 });
   return drafts;
 }

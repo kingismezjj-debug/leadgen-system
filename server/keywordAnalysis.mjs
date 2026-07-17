@@ -120,6 +120,11 @@ function fallbackKeywordStrategy(keywords) {
 }
 
 function extractOutputText(payload) {
+  const chatContent = payload.choices?.[0]?.message?.content;
+  if (typeof chatContent === 'string') return chatContent;
+  if (Array.isArray(chatContent)) {
+    return chatContent.map((item) => item.text || '').join('').trim();
+  }
   if (typeof payload.output_text === 'string') return payload.output_text;
   for (const item of payload.output || []) {
     for (const content of item.content || []) {
@@ -127,6 +132,18 @@ function extractOutputText(payload) {
     }
   }
   return '';
+}
+
+function parseJsonObject(text) {
+  const normalized = String(text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim();
+  try {
+    return JSON.parse(normalized);
+  } catch {
+    const start = normalized.indexOf('{');
+    const end = normalized.lastIndexOf('}');
+    if (start >= 0 && end > start) return JSON.parse(normalized.slice(start, end + 1));
+    throw new Error('AI keyword analysis returned invalid JSON.');
+  }
 }
 
 export async function analyzeKeywords({
@@ -144,7 +161,7 @@ export async function analyzeKeywords({
   }
 
   const normalizedBaseUrl = String(baseUrl || defaultOpenAiBaseUrl).trim().replace(/\/+$/, '');
-  const response = await fetchImpl(`${normalizedBaseUrl}/responses`, {
+  const response = await fetchImpl(`${normalizedBaseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -152,77 +169,25 @@ export async function analyzeKeywords({
     },
     body: JSON.stringify({
       model,
-      input: [
+      messages: [
         {
           role: 'system',
           content: [
-            {
-              type: 'input_text',
-              text: [
-                'You generate lead-search strategy for Google Maps/Places.',
-                'Do not execute searches. Return only compact JSON.',
-                `Use only these Google place types when possible: ${supportedPlaceTypes.join(', ')}.`,
-                'If the input is a product, infer likely buyers and avoid literal product-only keywords.'
-              ].join('\n')
-            }
-          ]
+            'You generate lead-search strategy for Google Maps/Places.',
+            'Do not execute searches. Return only compact JSON, without markdown fences.',
+            `Use only these Google place types when possible: ${supportedPlaceTypes.join(', ')}.`,
+            'If the input is a product, infer likely buyers and avoid literal product-only keywords.',
+            'Return an object with exactly these keys: customerProfile, productIntent, recommendedMode, primaryPlaceType, placeTypes, searchKeywords, negativeKeywords, searchBatches, notes.',
+            'recommendedMode must be one of keyword, type, smart.',
+            'Each searchBatches item must contain label, keyword, placeType, mode.'
+          ].join('\n')
         },
         {
           role: 'user',
-          content: [
-            {
-              type: 'input_text',
-              text: JSON.stringify({ keywords: keywordList, country, region })
-            }
-          ]
+          content: JSON.stringify({ keywords: keywordList, country, region })
         }
       ],
-      text: {
-        format: {
-          type: 'json_schema',
-          name: 'keyword_strategy',
-          strict: true,
-          schema: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              customerProfile: { type: 'string' },
-              productIntent: { type: 'string' },
-              recommendedMode: { type: 'string', enum: ['keyword', 'type', 'smart'] },
-              primaryPlaceType: { type: 'string' },
-              placeTypes: { type: 'array', items: { type: 'string' } },
-              searchKeywords: { type: 'array', items: { type: 'string' } },
-              negativeKeywords: { type: 'array', items: { type: 'string' } },
-              searchBatches: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  additionalProperties: false,
-                  properties: {
-                    label: { type: 'string' },
-                    keyword: { type: 'string' },
-                    placeType: { type: 'string' },
-                    mode: { type: 'string', enum: ['keyword', 'type', 'smart'] }
-                  },
-                  required: ['label', 'keyword', 'placeType', 'mode']
-                }
-              },
-              notes: { type: 'array', items: { type: 'string' } }
-            },
-            required: [
-              'customerProfile',
-              'productIntent',
-              'recommendedMode',
-              'primaryPlaceType',
-              'placeTypes',
-              'searchKeywords',
-              'negativeKeywords',
-              'searchBatches',
-              'notes'
-            ]
-          }
-        }
-      }
+      temperature: 0.2
     })
   });
 
@@ -234,5 +199,5 @@ export async function analyzeKeywords({
 
   const outputText = extractOutputText(payload);
   if (!outputText) throw Object.assign(new Error('AI 关键词分析返回内容为空。'), { status: 502 });
-  return { ...normalizeStrategy(JSON.parse(outputText)), source: 'openai' };
+  return { ...normalizeStrategy(parseJsonObject(outputText)), source: 'openai' };
 }
