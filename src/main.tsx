@@ -982,7 +982,7 @@ function App() {
   }, [activeLeadKeyword, leadKeywordTabs]);
 
   useEffect(() => {
-    if (!canManageGlobalApiSettings && ['google', 'translate'].includes(activeSettingsView)) {
+    if (!canManageGlobalApiSettings && ['google', 'translate', 'ai', 'email', 'members'].includes(activeSettingsView)) {
       setActiveSettingsView('workspace');
     }
   }, [activeSettingsView, canManageGlobalApiSettings]);
@@ -2863,6 +2863,8 @@ function SettingsSidebar({
         </>
       )}
 
+      {canManageApiSettings && (
+        <>
       <button
         type="button"
         className={activeSettingsView === 'ai' ? 'settings-tag active' : 'settings-tag'}
@@ -2874,7 +2876,11 @@ function SettingsSidebar({
           <small>{settings.hasOpenAiApiKey ? '已配置' : '未配置'}</small>
         </span>
       </button>
+        </>
+      )}
 
+      {canManageApiSettings && (
+        <>
       <button
         type="button"
         className={activeSettingsView === 'email' ? 'settings-tag active' : 'settings-tag'}
@@ -2886,7 +2892,11 @@ function SettingsSidebar({
           <small>{settings.mailerMode || 'dry-run'}</small>
         </span>
       </button>
+        </>
+      )}
 
+      {canManageApiSettings && (
+        <>
       <button
         type="button"
         className={activeSettingsView === 'members' ? 'settings-tag active' : 'settings-tag'}
@@ -2898,6 +2908,8 @@ function SettingsSidebar({
           <small>{authState.user ? `${authState.user.plan} · ${authState.user.role}` : '未登录'}</small>
         </span>
       </button>
+        </>
+      )}
 
       <button
         type="button"
