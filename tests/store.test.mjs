@@ -79,6 +79,30 @@ test('upsertLeads preserves every search source for duplicate leads', async (t) 
   ]);
 });
 
+test('upsertLeads keeps separate copies of the same lead for different owners', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'leadgen-store-owner-scope-'));
+  process.env.LEADGEN_STORE_PATH = join(directory, 'store.json');
+  const { readStore, upsertLeads } = await import('../server/store.mjs');
+  const lead = {
+    placeId: 'place-1',
+    name: 'Scoped Lead',
+    address: 'Test address',
+    emails: []
+  };
+
+  t.after(async () => {
+    delete process.env.LEADGEN_STORE_PATH;
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  await upsertLeads([lead], 'google-places:dentist:New York', { id: 'owner-a' });
+  await upsertLeads([lead], 'google-places:dentist:New York', { id: 'owner-b' });
+
+  const store = await readStore();
+  assert.equal(store.leads.length, 2);
+  assert.deepEqual(new Set(store.leads.map((item) => item.userId)), new Set(['owner-a', 'owner-b']));
+});
+
 test('upsertLeads merges email sources', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'leadgen-store-email-sources-'));
   process.env.LEADGEN_STORE_PATH = join(directory, 'store.json');
@@ -157,6 +181,40 @@ test('keyword group deletion can remove only the tag or its exclusive leads', as
   assert.equal(store.searches.length, 1);
 });
 
+test('keyword group deletion stays within one owner scope', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'leadgen-store-delete-group-owner-'));
+  process.env.LEADGEN_STORE_PATH = join(directory, 'store.json');
+  const {
+    addSearchRecord,
+    deleteLeadKeywordGroup,
+    readStore,
+    upsertLeads
+  } = await import('../server/store.mjs');
+  const sharedLead = { placeId: 'shared', name: 'Shared', address: 'Shared address' };
+
+  t.after(async () => {
+    delete process.env.LEADGEN_STORE_PATH;
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  await addSearchRecord({ keyword: 'dentist', area: 'New York' }, { id: 'owner-a' });
+  await addSearchRecord({ keyword: 'dentist', area: 'New York' }, { id: 'owner-b' });
+  await upsertLeads([sharedLead], 'google-places:dentist:New York', { id: 'owner-a' });
+  await upsertLeads([sharedLead], 'google-places:dentist:New York', { id: 'owner-b' });
+
+  const result = await deleteLeadKeywordGroup('dentist', 'tag', { id: 'owner-a', role: 'member' });
+  assert.equal(result.deletedSearches, 1);
+
+  const store = await readStore();
+  assert.equal(store.searches.length, 1);
+  assert.equal(store.searches[0].userId, 'owner-b');
+  assert.equal(store.leads.length, 2);
+  const ownerALead = store.leads.find((lead) => lead.userId === 'owner-a');
+  const ownerBLead = store.leads.find((lead) => lead.userId === 'owner-b');
+  assert.deepEqual(ownerALead.searchSources, []);
+  assert.deepEqual(ownerBLead.searchSources, ['google-places:dentist:New York']);
+});
+
 test('deleteAllLeadData clears leads and search tabs without touching other records', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'leadgen-store-delete-all-'));
   process.env.LEADGEN_STORE_PATH = join(directory, 'store.json');
@@ -186,6 +244,40 @@ test('deleteAllLeadData clears leads and search tabs without touching other reco
   assert.deepEqual(store.leads, []);
   assert.deepEqual(store.searches, []);
   assert.equal(store.campaigns.length, 1);
+});
+
+test('deleteAllLeadData only clears the current owner when scoped', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'leadgen-store-delete-owner-'));
+  process.env.LEADGEN_STORE_PATH = join(directory, 'store.json');
+  const {
+    addCampaignRecord,
+    addSearchRecord,
+    deleteAllLeadData,
+    readStore,
+    upsertLeads
+  } = await import('../server/store.mjs');
+
+  t.after(async () => {
+    delete process.env.LEADGEN_STORE_PATH;
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  await addSearchRecord({ keyword: 'owner-a', area: 'New York' }, { id: 'owner-a' });
+  await addSearchRecord({ keyword: 'owner-b', area: 'New York' }, { id: 'owner-b' });
+  await upsertLeads([{ placeId: 'lead-a', name: 'Lead A', address: 'Address A' }], 'google-places:owner-a:New York', { id: 'owner-a' });
+  await upsertLeads([{ placeId: 'lead-b', name: 'Lead B', address: 'Address B' }], 'google-places:owner-b:New York', { id: 'owner-b' });
+  await addCampaignRecord({ subject: 'Keep me', leadCount: 1 }, { id: 'owner-b' });
+
+  const result = await deleteAllLeadData({ id: 'owner-a', role: 'member' });
+  assert.deepEqual(result, { deletedLeads: 1, deletedSearches: 1 });
+
+  const store = await readStore();
+  assert.equal(store.leads.length, 1);
+  assert.equal(store.leads[0].userId, 'owner-b');
+  assert.equal(store.searches.length, 1);
+  assert.equal(store.searches[0].userId, 'owner-b');
+  assert.equal(store.campaigns.length, 1);
+  assert.equal(store.campaigns[0].userId, 'owner-b');
 });
 
 test('task records can be read and cleared by status', async (t) => {

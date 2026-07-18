@@ -1,7 +1,9 @@
 import express from 'express';
 import cors from 'cors';
 import { timingSafeEqual } from 'node:crypto';
-import { pathToFileURL } from 'node:url';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { countDailySendAttempts, selectCampaignLeads } from './campaigns.mjs';
 import { config, getMailerMode } from './config.mjs';
 import { leadsToCsv } from './csv.mjs';
@@ -12,6 +14,7 @@ import { assessLeadEmails } from './emailQuality.mjs';
 import { enrichLeadsWithEmails } from './leadEmailEnrichment.mjs';
 import { buildUnsubscribeUrl, sendCampaign, previewCampaign, verifySmtpSettings } from './mailer.mjs';
 import { searchPlaces } from './places.mjs';
+import { generateWhatsAppDrafts } from './whatsappGeneration.mjs';
 import { translateEmailCampaign } from './translate.mjs';
 import { enrichLeadWaterfall } from './waterfallEnrichment.mjs';
 import {
@@ -154,17 +157,24 @@ function canManageGlobalApiSettings(user) {
   return ['super_admin', 'admin'].includes(user?.role || '');
 }
 
+function isSuperAdmin(user) {
+  return user?.role === 'super_admin';
+}
+
+function visibleRecords(records, user) {
+  if (isSuperAdmin(user)) return records;
+  const ownerId = String(user?.id || '').trim();
+  if (!ownerId) return [];
+  return records.filter((record) => String(record?.userId || '').trim() === ownerId);
+}
+
+function findVisibleLead(store, leadId, user) {
+  return visibleRecords(store.leads || [], user).find((item) => item.id === leadId) || null;
+}
+
 function settingsInputForUser(input = {}, user = null) {
   if (canManageGlobalApiSettings(user)) return input;
-  const next = { ...input };
-  delete next.googleMapsApiKey;
-  delete next.googleTranslateApiKey;
-  delete next.yelpApiKey;
-  delete next.foursquareApiKey;
-  delete next.hunterApiKey;
-  delete next.placesLanguageCode;
-  delete next.placesRegionCode;
-  return next;
+  return {};
 }
 
 function normalizeEmailDiscoveryDepth(value) {
@@ -233,7 +243,7 @@ async function executeSearchTask(searchInput, user = null) {
     progress: 5,
     detail: `${input.keyword} · ${input.area}`,
     context: input
-  });
+  }, user);
 
   try {
     await consumeUsage(user, 'search_places', input.maxResults, { keyword: input.keyword, area: input.area });
@@ -266,7 +276,7 @@ async function executeSearchTask(searchInput, user = null) {
     }
 
     await updateTaskRecord(task.id, { progress: 80, detail: '正在写入线索库' });
-    const upsert = await upsertLeads(leads, source);
+    const upsert = await upsertLeads(leads, source, user);
     const search = await addSearchRecord({
       keyword: input.keyword,
       area: input.area,
@@ -282,7 +292,7 @@ async function executeSearchTask(searchInput, user = null) {
       created: upsert.created,
       updated: upsert.updated,
       nextPageToken: result.nextPageToken
-    });
+    }, user);
     await updateTaskRecord(task.id, {
       status: 'done',
       progress: 100,
@@ -356,11 +366,11 @@ app.patch('/api/admin/users/:id', requireAdminRole, asyncHandler(async (req, res
 }));
 
 app.get('/api/settings', asyncHandler(async (_req, res) => {
-  res.json({ settings: await getClientSettings() });
+  res.json({ settings: await getClientSettings(_req.user) });
 }));
 
 app.post('/api/settings', asyncHandler(async (req, res) => {
-  res.json({ settings: await saveClientSettings(settingsInputForUser(req.body || {}, req.user)) });
+  res.json({ settings: await saveClientSettings(settingsInputForUser(req.body || {}, req.user), req.user) });
 }));
 
 app.post('/api/email/test-smtp', asyncHandler(async (_req, res) => {
@@ -382,6 +392,48 @@ app.post('/api/email/translate', asyncHandler(async (req, res) => {
   res.json(translated);
 }));
 
+app.post('/api/whatsapp/translate', asyncHandler(async (req, res) => {
+  const settings = await getRuntimeSettings();
+  await consumeUsage(req.user, 'translate_whatsapp', 1, { targetLanguage: req.body?.targetLanguage });
+  const task = await addTaskRecord({
+    kind: 'whatsapp-translate',
+    title: 'WhatsApp 翻译',
+    status: 'running',
+    progress: 20,
+    detail: String(req.body?.targetLanguage || '翻译 WhatsApp 消息'),
+    context: {
+      targetLanguage: req.body?.targetLanguage,
+      bodyLength: String(req.body?.body || '').length
+    }
+  }, req.user);
+
+  try {
+    const translated = await translateEmailCampaign({
+      subject: '',
+      body: req.body?.body,
+      htmlBody: '',
+      targetLanguage: req.body?.targetLanguage,
+      apiKey: settings.googleTranslateApiKey
+    });
+    await updateTaskRecord(task.id, {
+      status: 'done',
+      progress: 100,
+      detail: `WhatsApp 消息已翻译为 ${translated.targetLanguage}`,
+      completedAt: new Date().toISOString()
+    });
+    res.json({ task, ...translated });
+  } catch (error) {
+    await updateTaskRecord(task.id, {
+      status: 'failed',
+      progress: 100,
+      detail: error instanceof Error ? error.message : 'WhatsApp 翻译失败',
+      error: error instanceof Error ? error.message : 'WhatsApp 翻译失败',
+      completedAt: new Date().toISOString()
+    });
+    throw error;
+  }
+}));
+
 app.post('/api/email/generate-drafts', asyncHandler(async (req, res) => {
   const settings = await getRuntimeSettings();
   await consumeUsage(req.user, 'ai_email_generation', 1, { keywords: req.body?.keywords, audience: req.body?.audience });
@@ -397,7 +449,7 @@ app.post('/api/email/generate-drafts', asyncHandler(async (req, res) => {
       region: req.body?.region,
       model: settings.openAiModel || config.openAiModel
     }
-  });
+  }, req.user);
 
   try {
     await updateTaskRecord(task.id, { progress: 35, detail: '正在生成邮件版本' });
@@ -429,20 +481,72 @@ app.post('/api/email/generate-drafts', asyncHandler(async (req, res) => {
   }
 }));
 
+app.post('/api/whatsapp/generate-drafts', asyncHandler(async (req, res) => {
+  const settings = await getRuntimeSettings();
+  await consumeUsage(req.user, 'ai_whatsapp_generation', 1, { keywords: req.body?.keywords, audience: req.body?.audience });
+  const task = await addTaskRecord({
+    kind: 'analysis',
+    title: '生成 WhatsApp 文案',
+    status: 'running',
+    progress: 10,
+    detail: String(req.body?.keywords || req.body?.audience || 'AI WhatsApp 文案生成'),
+    context: {
+      keywords: req.body?.keywords,
+      country: req.body?.country,
+      region: req.body?.region,
+      model: settings.openAiModel || config.openAiModel
+    }
+  }, req.user);
+
+  try {
+    await updateTaskRecord(task.id, { progress: 35, detail: '正在生成 WhatsApp 文案版本' });
+    const drafts = await generateWhatsAppDrafts({
+      keywords: req.body?.keywords,
+      country: req.body?.country,
+      region: req.body?.region,
+      audience: req.body?.audience,
+      apiKey: settings.openAiApiKey,
+      baseUrl: settings.openAiBaseUrl,
+      model: settings.openAiModel || config.openAiModel
+    });
+    await updateTaskRecord(task.id, {
+      status: 'done',
+      progress: 100,
+      detail: `已生成 ${drafts.length} 版 WhatsApp 文案`,
+      completedAt: new Date().toISOString()
+    });
+    res.json({ task, drafts });
+  } catch (error) {
+    await updateTaskRecord(task.id, {
+      status: 'failed',
+      progress: 100,
+      detail: error instanceof Error ? error.message : 'AI WhatsApp 文案生成失败',
+      error: error instanceof Error ? error.message : 'AI WhatsApp 文案生成失败',
+      completedAt: new Date().toISOString()
+    });
+    throw error;
+  }
+}));
+
 app.get('/api/leads', asyncHandler(async (_req, res) => {
   const store = await readStore();
+  const leads = visibleRecords(store.leads || [], _req.user);
+  const searches = visibleRecords(store.searches || [], _req.user);
+  const campaigns = visibleRecords(store.campaigns || [], _req.user);
+  const tasks = visibleRecords(store.tasks || [], _req.user);
+  const sendLog = visibleRecords(store.sendLog || [], _req.user).slice(0, 100);
   res.json({
-    leads: store.leads,
-    searches: store.searches,
-    campaigns: store.campaigns,
-    tasks: store.tasks,
-    suppressions: store.suppressions,
-    sendLog: store.sendLog.slice(0, 100)
+    leads,
+    searches,
+    campaigns,
+    tasks,
+    suppressions: isSuperAdmin(_req.user) ? store.suppressions : [],
+    sendLog
   });
 }));
 
 app.delete('/api/leads', asyncHandler(async (_req, res) => {
-  res.json({ result: await deleteAllLeadData() });
+  res.json({ result: await deleteAllLeadData(_req.user) });
 }));
 
 app.post('/api/searches/analyze-keywords', asyncHandler(async (req, res) => {
@@ -460,7 +564,7 @@ app.post('/api/searches/analyze-keywords', asyncHandler(async (req, res) => {
       region: req.body?.region,
       model: settings.openAiModel || config.openAiModel
     }
-  });
+  }, req.user);
 
   try {
     await updateTaskRecord(task.id, { progress: 35, detail: '正在分析搜索意图' });
@@ -492,7 +596,7 @@ app.post('/api/searches/analyze-keywords', asyncHandler(async (req, res) => {
 }));
 
 app.post('/api/tasks/:id/retry', asyncHandler(async (req, res) => {
-  const task = await getTaskRecord(req.params.id);
+  const task = await getTaskRecord(req.params.id, req.user);
   if (!task) return res.status(404).json({ error: 'Task not found.' });
   if (task.status !== 'failed') {
     return res.status(400).json({ error: 'Only failed tasks can be retried.' });
@@ -509,132 +613,20 @@ app.post('/api/tasks/:id/retry', asyncHandler(async (req, res) => {
 app.delete('/api/tasks', asyncHandler(async (req, res) => {
   const rawStatus = String(req.query.status || 'done,failed');
   const statuses = rawStatus === 'all' ? [] : rawStatus.split(',');
-  res.json({ result: await deleteTaskRecords({ statuses }) });
+  res.json({ result: await deleteTaskRecords({ statuses, user: req.user }) });
 }));
 
 app.delete('/api/send-log', asyncHandler(async (_req, res) => {
-  res.json({ result: await deleteSendLogEntries() });
+  res.json({ result: await deleteSendLogEntries(_req.user) });
 }));
 
 app.post('/api/searches', asyncHandler(async (req, res) => {
   res.json(await executeSearchTask(req.body || {}, req.user));
 }));
 
-app.post('/api/searches', asyncHandler(async (req, res) => {
-  const {
-    keyword,
-    area,
-    maxResults = 20,
-    includeEmailDiscovery = true,
-    pageToken = '',
-    languageCode = '',
-    regionCode = '',
-    searchMode = 'keyword',
-    placeType = '',
-    emailDiscoveryDepth = 1
-  } = req.body || {};
-  const normalizedEmailDiscoveryDepth = normalizeEmailDiscoveryDepth(emailDiscoveryDepth);
-  if (!keyword || !area) {
-    return res.status(400).json({ error: 'keyword 和 area 都是必填项。' });
-  }
-  if (typeof pageToken !== 'string' || pageToken.length > 4000) {
-    return res.status(400).json({ error: 'pageToken 格式无效。' });
-  }
-  if (languageCode && (typeof languageCode !== 'string' || !/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/i.test(languageCode))) {
-    return res.status(400).json({ error: 'languageCode 格式无效。' });
-  }
-  if (regionCode && (typeof regionCode !== 'string' || !/^[a-z]{2}$/i.test(regionCode))) {
-    return res.status(400).json({ error: 'regionCode 格式无效。' });
-  }
-
-  if (searchMode && (typeof searchMode !== 'string' || !/^(keyword|type|smart)$/i.test(searchMode))) {
-    return res.status(400).json({ error: 'searchMode 格式无效。' });
-  }
-  if (placeType && (typeof placeType !== 'string' || !/^[a-z][a-z0-9_]{1,80}$/i.test(placeType))) {
-    return res.status(400).json({ error: 'placeType 格式无效。' });
-  }
-
-  const source = `google-places:${keyword}:${area}`;
-  const task = await addTaskRecord({
-    kind: 'search',
-    title: '搜索商户',
-    status: 'running',
-    progress: 5,
-    detail: `${keyword} · ${area}`,
-    context: { keyword, area, maxResults, includeEmailDiscovery, regionCode, searchMode, placeType, emailDiscoveryDepth: normalizedEmailDiscoveryDepth }
-  });
-
-  try {
-    await updateTaskRecord(task.id, { progress: 20, detail: '正在调用 Google Places' });
-    const result = await searchPlaces({ keyword, area, maxResults, pageToken, languageCode, regionCode, searchMode, placeType });
-    let leads = result.leads;
-    await updateTaskRecord(task.id, {
-      progress: includeEmailDiscovery ? 35 : 60,
-      detail: `已获取 ${leads.length} 条候选线索`
-    });
-
-    if (includeEmailDiscovery) {
-      leads = await enrichLeadsWithEmails(leads, {
-        concurrency: 4,
-        retries: 1,
-        emailDiscoveryDepth: normalizedEmailDiscoveryDepth,
-        onProgress: async ({ completed, total }) => {
-          const progress = 35 + Math.round((completed / Math.max(total, 1)) * 45);
-          await updateTaskRecord(task.id, {
-            progress,
-            detail: `邮箱发现 ${completed}/${total}`
-          });
-        }
-      });
-    }
-
-    await updateTaskRecord(task.id, { progress: 80, detail: '正在写入线索库' });
-    const upsert = await upsertLeads(leads, source);
-    const search = await addSearchRecord({
-      keyword,
-      area,
-      maxResults,
-      includeEmailDiscovery,
-      languageCode,
-      regionCode,
-      searchMode,
-      placeType,
-      emailDiscoveryDepth: normalizedEmailDiscoveryDepth,
-      strategies: result.strategies || [],
-      pageTokenUsed: Boolean(pageToken),
-      created: upsert.created,
-      updated: upsert.updated,
-      nextPageToken: result.nextPageToken
-    });
-    await updateTaskRecord(task.id, {
-      status: 'done',
-      progress: 100,
-      detail: `完成：新增 ${upsert.created}，更新 ${upsert.updated}`,
-      completedAt: new Date().toISOString()
-    });
-
-    res.json({
-      task,
-      search,
-      created: upsert.created,
-      updated: upsert.updated,
-      leads: upsert.leads
-    });
-  } catch (error) {
-    await updateTaskRecord(task.id, {
-      status: 'failed',
-      progress: 100,
-      detail: error instanceof Error ? error.message : '搜索失败',
-      error: error instanceof Error ? error.message : '搜索失败',
-      completedAt: new Date().toISOString()
-    });
-    throw error;
-  }
-}));
-
 app.post('/api/leads/:id/discover-email', asyncHandler(async (req, res) => {
   const store = await readStore();
-  const lead = store.leads.find((item) => item.id === req.params.id);
+  const lead = findVisibleLead(store, req.params.id, req.user);
   if (!lead) return res.status(404).json({ error: 'Lead not found' });
   await consumeUsage(req.user, 'discover_email', 1, { leadId: lead.id, website: lead.website });
   const settings = await getRuntimeSettings();
@@ -649,13 +641,13 @@ app.post('/api/leads/:id/discover-email', asyncHandler(async (req, res) => {
     emailDiscoveryCheckedAt: new Date().toISOString(),
     emailDiscoveryAttempts: (lead.emailDiscoveryAttempts || 0) + 1
   };
-  const updated = await updateLead(lead.id, patch);
+  const updated = await updateLead(lead.id, patch, req.user);
   res.json({ lead: updated, discovered: enriched.emails || [], steps: enriched.enrichmentSteps || [] });
 }));
 
 app.post('/api/leads/:id', asyncHandler(async (req, res) => {
   const patch = validateLeadPatch(req.body);
-  const lead = await updateLead(req.params.id, patch);
+  const lead = await updateLead(req.params.id, patch, req.user);
   if (!lead) return res.status(404).json({ error: 'Lead not found' });
   res.json({ lead });
 }));
@@ -663,13 +655,14 @@ app.post('/api/leads/:id', asyncHandler(async (req, res) => {
 app.get('/api/export/leads.csv', asyncHandler(async (_req, res) => {
   await consumeUsage(_req.user, 'export_csv', 1, { kind: 'leads' });
   const store = await readStore();
+  const leads = visibleRecords(store.leads || [], _req.user);
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="leads.csv"');
-  res.send(leadsToCsv(store.leads));
+  res.send(leadsToCsv(leads));
 }));
 
 app.delete('/api/lead-groups', asyncHandler(async (req, res) => {
-  const result = await deleteLeadKeywordGroup(req.body?.keyword, req.body?.action);
+  const result = await deleteLeadKeywordGroup(req.body?.keyword, req.body?.action, req.user);
   res.json({ result });
 }));
 
@@ -697,9 +690,10 @@ app.post('/api/campaigns/preview', asyncHandler(async (req, res) => {
   const campaign = validateCampaignInput(req.body);
   const store = await readStore();
   const manualEmail = campaign.recipients[0];
+  const leads = visibleRecords(store.leads || [], req.user);
   const sample = manualEmail
     ? { id: `manual:${manualEmail}`, name: manualEmail.split('@')[0], emails: [manualEmail] }
-    : store.leads.find((lead) => (lead.emails || []).length) || store.leads[0];
+    : leads.find((lead) => (lead.emails || []).length) || leads[0];
   if (!sample) return res.status(400).json({ error: '还没有线索可用于预览。' });
   const settings = await getRuntimeSettings();
   const unsubscribeUrl = buildUnsubscribeUrl(settings, 'preview-token');
@@ -724,7 +718,7 @@ app.post('/api/campaigns/send', asyncHandler(async (req, res) => {
       leadIds: campaign.leadIds,
       leadIdCount: campaign.leadIds.length
     }
-  });
+  }, req.user);
 
   await enqueueCampaign(async () => {
     const store = await readStore();
@@ -746,7 +740,7 @@ app.post('/api/campaigns/send', asyncHandler(async (req, res) => {
       throw Object.assign(new Error(`邮件尚未达到真实发送条件：${emailReadiness.issues.join('；')}`), { status: 400 });
     }
     const dailyLimit = Math.max(1, Math.floor(Number(settings.emailDailyLimit) || 1));
-    const usedBefore = countDailySendAttempts(store.sendLog);
+    const usedBefore = countDailySendAttempts(store.sendLog, new Date(), req.user?.id || '');
     const remainingBefore = Math.max(0, dailyLimit - usedBefore);
     const availableLeads = campaign.recipients.length
       ? campaign.recipients.map((email, index) => ({
@@ -755,7 +749,7 @@ app.post('/api/campaigns/send', asyncHandler(async (req, res) => {
           emails: [email],
           status: 'manual'
         }))
-      : store.leads;
+      : visibleRecords(store.leads || [], req.user);
     const selected = selectCampaignLeads({
       leads: availableLeads,
       leadIds: campaign.leadIds,
@@ -804,8 +798,8 @@ app.post('/api/campaigns/send', asyncHandler(async (req, res) => {
       dryRun: campaign.dryRun,
       mode: delivery.mode,
       leadCount: selected.length
-    });
-    await addSendLog(delivery.results);
+    }, req.user);
+    await addSendLog(delivery.results, req.user);
     await updateTaskRecord(task.id, {
       status: 'done',
       progress: 100,
@@ -836,7 +830,8 @@ app.use((error, _req, res, _next) => {
 
 export { app };
 
-const isMainModule = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+const isMainModule = process.argv[1]
+  && fs.realpathSync(fileURLToPath(import.meta.url)) === fs.realpathSync(path.resolve(process.argv[1]));
 if (isMainModule) {
   app.listen(config.port, config.host, () => {
     console.log(`Leadgen API running at http://${config.host}:${config.port}`);

@@ -1,7 +1,7 @@
 import { emailHtmlToText, sanitizeEmailHtml } from './emailHtml.mjs';
 
 const targetLanguagePattern = /^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
-const templateTokenPattern = /{{\s*[\w.-]+\s*}}/g;
+const templateTokenPattern = /{{\s*[\w.-]+\s*}}|{\s*[\w.-]+\s*}/g;
 const maxSubjectLength = 300;
 const maxBodyLength = 30_000;
 

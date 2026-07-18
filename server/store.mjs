@@ -41,19 +41,33 @@ export async function readStore() {
   return { ...emptyStore(), ...JSON.parse(raw) };
 }
 
+const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+async function renameWithRetry(sourcePath, targetPath, { attempts = 12, delayMs = 35 } = {}) {
+  for (let index = 0; index < attempts; index += 1) {
+    try {
+      await rename(sourcePath, targetPath);
+      return;
+    } catch (error) {
+      if (!['EPERM', 'EBUSY', 'EACCES'].includes(error.code) || index === attempts - 1) {
+        throw error;
+      }
+      await wait(delayMs * (index + 1));
+    }
+  }
+}
+
 async function writeStoreAtomic(nextStore) {
   const storePath = getStorePath();
   const temporaryPath = `${storePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
   await mkdir(dirname(storePath), { recursive: true });
   try {
     await writeFile(temporaryPath, JSON.stringify(nextStore, null, 2));
-    await rename(temporaryPath, storePath);
+    await renameWithRetry(temporaryPath, storePath);
   } finally {
     await rm(temporaryPath, { force: true }).catch(() => {});
   }
 }
-
-const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 async function acquireFileLock(filePath, { timeoutMs = 5000, staleMs = 30_000 } = {}) {
   const lockPath = `${filePath}.lock`;
@@ -113,10 +127,27 @@ export async function writeStore(nextStore) {
   });
 }
 
-export function normalizeLeadKey(lead) {
-  if (lead.placeId) return `place:${lead.placeId}`;
-  if (lead.website) return `site:${lead.website.toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '')}`;
-  return `name:${lead.name.toLowerCase()}|${lead.address.toLowerCase()}`;
+function normalizeOwnerId(userOrId = null) {
+  if (!userOrId) return '';
+  if (typeof userOrId === 'string') return userOrId.trim();
+  return String(userOrId.id || '').trim();
+}
+
+function isSuperAdminUser(user = null) {
+  return user?.role === 'super_admin';
+}
+
+function recordBelongsToUser(record, user = null) {
+  const ownerId = normalizeOwnerId(user);
+  if (!ownerId || isSuperAdminUser(user)) return true;
+  return normalizeOwnerId(record?.userId || record?.ownerId) === ownerId;
+}
+
+export function normalizeLeadKey(lead, ownerId = '') {
+  const scope = normalizeOwnerId(ownerId) || normalizeOwnerId(lead?.userId) || normalizeOwnerId(lead?.ownerId);
+  if (lead.placeId) return `${scope}|place:${lead.placeId}`;
+  if (lead.website) return `${scope}|site:${lead.website.toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '')}`;
+  return `${scope}|name:${lead.name.toLowerCase()}|${lead.address.toLowerCase()}`;
 }
 
 function mergeEmailQuality(existingQuality = [], incomingQuality = [], emails = []) {
@@ -140,15 +171,17 @@ function mergeEmailSources(existingSources = [], incomingSources = []) {
   return Array.from(byKey.values());
 }
 
-export async function upsertLeads(incomingLeads, source) {
+export async function upsertLeads(incomingLeads, source, user = null) {
   return mutateStore((store) => {
-    const byKey = new Map(store.leads.map((lead) => [normalizeLeadKey(lead), lead]));
+    const ownerId = normalizeOwnerId(user);
+    const byKey = new Map(store.leads.map((lead) => [normalizeLeadKey(lead, lead.userId || lead.ownerId), lead]));
     const now = new Date().toISOString();
     let created = 0;
     let updated = 0;
 
     for (const incoming of incomingLeads) {
-      const key = normalizeLeadKey(incoming);
+      const leadOwnerId = ownerId || normalizeOwnerId(incoming.userId) || normalizeOwnerId(incoming.ownerId);
+      const key = normalizeLeadKey(incoming, leadOwnerId);
       const existing = byKey.get(key);
       if (existing) {
         const emails = Array.from(new Set([...(existing.emails || []), ...(incoming.emails || [])]));
@@ -162,6 +195,7 @@ export async function upsertLeads(incomingLeads, source) {
         Object.assign(existing, {
           ...existing,
           ...incoming,
+          userId: existing.userId || leadOwnerId || '',
           emails,
           emailQuality,
           emailSources,
@@ -179,6 +213,7 @@ export async function upsertLeads(incomingLeads, source) {
           createdAt: now,
           updatedAt: now,
           source,
+          userId: leadOwnerId || '',
           searchSources: source ? [source] : [],
           ...incoming
         };
@@ -192,20 +227,21 @@ export async function upsertLeads(incomingLeads, source) {
   });
 }
 
-export async function updateLead(leadId, patch) {
+export async function updateLead(leadId, patch, user = null) {
   return mutateStore((store) => {
     const lead = store.leads.find((item) => item.id === leadId);
-    if (!lead) return null;
+    if (!lead || !recordBelongsToUser(lead, user)) return null;
     Object.assign(lead, patch, { updatedAt: new Date().toISOString() });
     return lead;
   });
 }
 
-export async function addSearchRecord(record) {
+export async function addSearchRecord(record, user = null) {
   return mutateStore((store) => {
     const search = {
       id: randomUUID(),
       createdAt: new Date().toISOString(),
+      userId: normalizeOwnerId(user),
       ...record
     };
     store.searches.unshift(search);
@@ -213,7 +249,7 @@ export async function addSearchRecord(record) {
   });
 }
 
-export async function addTaskRecord(record) {
+export async function addTaskRecord(record, user = null) {
   return mutateStore((store) => {
     const now = new Date().toISOString();
     const task = {
@@ -222,6 +258,7 @@ export async function addTaskRecord(record) {
       progress: 0,
       createdAt: now,
       updatedAt: now,
+      userId: normalizeOwnerId(user),
       ...record
     };
     store.tasks.unshift(task);
@@ -239,27 +276,36 @@ export async function updateTaskRecord(taskId, patch) {
   });
 }
 
-export async function getTaskRecord(taskId) {
+export async function getTaskRecord(taskId, user = null) {
   const store = await readStore();
-  return store.tasks.find((item) => item.id === taskId) || null;
+  const ownerId = normalizeOwnerId(user);
+  const isSuperAdmin = user?.role === 'super_admin';
+  return store.tasks.find((item) => item.id === taskId && (isSuperAdmin || !ownerId || item.userId === ownerId)) || null;
 }
 
-export async function deleteTaskRecords({ statuses = [] } = {}) {
+export async function deleteTaskRecords({ statuses = [], user = null } = {}) {
   const normalizedStatuses = new Set(
     statuses.map((status) => String(status || '').trim().toLowerCase()).filter(Boolean)
   );
+  const ownerId = normalizeOwnerId(user);
+  const isSuperAdmin = user?.role === 'super_admin';
   return mutateStore((store) => {
     const before = store.tasks.length;
     if (!normalizedStatuses.size) {
-      store.tasks = [];
+      store.tasks = isSuperAdmin || !ownerId
+        ? []
+        : store.tasks.filter((task) => task.userId !== ownerId);
     } else {
-      store.tasks = store.tasks.filter((task) => !normalizedStatuses.has(String(task.status || '').toLowerCase()));
+      store.tasks = store.tasks.filter((task) => {
+        if (!normalizedStatuses.has(String(task.status || '').toLowerCase())) return true;
+        return !isSuperAdmin && ownerId && task.userId !== ownerId;
+      });
     }
     return { deletedTasks: before - store.tasks.length };
   });
 }
 
-export async function deleteLeadKeywordGroup(keyword, action) {
+export async function deleteLeadKeywordGroup(keyword, action, user = null) {
   const normalizedKeyword = String(keyword || '').trim().toLowerCase();
   if (!normalizedKeyword) {
     throw Object.assign(new Error('keyword 是必填项。'), { status: 400 });
@@ -270,7 +316,7 @@ export async function deleteLeadKeywordGroup(keyword, action) {
 
   return mutateStore((store) => {
     const matchingSearches = store.searches.filter((search) => {
-      return String(search.keyword || '').trim().toLowerCase() === normalizedKeyword;
+      return String(search.keyword || '').trim().toLowerCase() === normalizedKeyword && recordBelongsToUser(search, user);
     });
     if (!matchingSearches.length) {
       throw Object.assign(new Error('没有找到对应的关键词标签。'), { status: 404 });
@@ -284,11 +330,12 @@ export async function deleteLeadKeywordGroup(keyword, action) {
 
     if (action === 'tag') {
       store.searches = store.searches.filter((search) => {
-        return String(search.keyword || '').trim().toLowerCase() !== normalizedKeyword;
+        return String(search.keyword || '').trim().toLowerCase() !== normalizedKeyword || !recordBelongsToUser(search, user);
       });
     }
 
     store.leads = store.leads.filter((lead) => {
+      if (!recordBelongsToUser(lead, user)) return true;
       const currentSources = Array.from(new Set([
         ...(lead.searchSources || []),
         ...(lead.source ? [lead.source] : [])
@@ -319,21 +366,27 @@ export async function deleteLeadKeywordGroup(keyword, action) {
   });
 }
 
-export async function deleteAllLeadData() {
+export async function deleteAllLeadData(user = null) {
   return mutateStore((store) => {
-    const deletedLeads = store.leads.length;
-    const deletedSearches = store.searches.length;
-    store.leads = [];
-    store.searches = [];
+    const deletedLeads = store.leads.filter((lead) => recordBelongsToUser(lead, user)).length;
+    const deletedSearches = store.searches.filter((search) => recordBelongsToUser(search, user)).length;
+    if (isSuperAdminUser(user) || !normalizeOwnerId(user)) {
+      store.leads = [];
+      store.searches = [];
+    } else {
+      store.leads = store.leads.filter((lead) => !recordBelongsToUser(lead, user));
+      store.searches = store.searches.filter((search) => !recordBelongsToUser(search, user));
+    }
     return { deletedLeads, deletedSearches };
   });
 }
 
-export async function addCampaignRecord(record) {
+export async function addCampaignRecord(record, user = null) {
   return mutateStore((store) => {
     const campaign = {
       id: randomUUID(),
       createdAt: new Date().toISOString(),
+      userId: normalizeOwnerId(user),
       ...record
     };
     store.campaigns.unshift(campaign);
@@ -341,17 +394,27 @@ export async function addCampaignRecord(record) {
   });
 }
 
-export async function addSendLog(entries) {
+export async function addSendLog(entries, user = null) {
   return mutateStore((store) => {
-    store.sendLog.unshift(...entries.map((entry) => ({ id: randomUUID(), at: new Date().toISOString(), ...entry })));
+    const ownerId = normalizeOwnerId(user);
+    store.sendLog.unshift(...entries.map((entry) => ({
+      id: randomUUID(),
+      at: new Date().toISOString(),
+      userId: ownerId,
+      ...entry
+    })));
     store.sendLog = store.sendLog.slice(0, 500);
   });
 }
 
-export async function deleteSendLogEntries() {
+export async function deleteSendLogEntries(user = null) {
   return mutateStore((store) => {
-    const deletedSendLog = store.sendLog.length;
-    store.sendLog = [];
+    const deletedSendLog = store.sendLog.filter((entry) => recordBelongsToUser(entry, user)).length;
+    if (isSuperAdminUser(user) || !normalizeOwnerId(user)) {
+      store.sendLog = [];
+    } else {
+      store.sendLog = store.sendLog.filter((entry) => !recordBelongsToUser(entry, user));
+    }
     return { deletedSendLog };
   });
 }

@@ -5,9 +5,12 @@ import {
   AlignLeft,
   AlignRight,
   Bold,
+  ChevronDown,
+  ChevronUp,
   Download,
   Check,
   Eraser,
+  Copy,
   Globe2,
   ImagePlus,
   Italic,
@@ -17,6 +20,7 @@ import {
   ListOrdered,
   Mail,
   MapPin,
+  MessageCircle,
   Phone,
   Play,
   Redo2,
@@ -214,6 +218,31 @@ type EmailDraft = {
   htmlBody: string;
 };
 
+type WhatsAppDraft = {
+  id: string;
+  angle: string;
+  message: string;
+  followUp: string;
+};
+
+type WhatsAppQueueItem = {
+  id: string;
+  leadId?: string;
+  name: string;
+  phone: string;
+  normalizedPhone: string;
+  source?: string;
+};
+
+type WhatsAppMessageContext = {
+  name?: string;
+  companyType?: string;
+  phone?: string;
+  website?: string;
+  address?: string;
+  source?: string;
+};
+
 type KeywordStrategy = {
   customerProfile: string;
   productIntent: string;
@@ -291,6 +320,52 @@ const parseRecipientEmails = (value: string) => Array.from(new Set(
     .map((email) => email.trim())
     .filter(Boolean)
 ));
+
+function normalizeWhatsAppPhone(phone: string) {
+  const trimmed = String(phone || '').trim();
+  if (!trimmed) return '';
+  const normalized = trimmed.replace(/[^\d+]/g, '');
+  if (!normalized) return '';
+  if (normalized.startsWith('+')) return normalized.slice(1);
+  if (normalized.startsWith('00')) return normalized.slice(2);
+  return normalized;
+}
+
+function isMobileBrowser() {
+  if (typeof navigator === 'undefined') return false;
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+}
+
+function buildWhatsAppUrl(phone: string, message = '') {
+  const normalizedPhone = normalizeWhatsAppPhone(phone);
+  if (!normalizedPhone) return '';
+  const encodedMessage = message.trim() ? `text=${encodeURIComponent(message.trim())}` : '';
+  const mobile = isMobileBrowser();
+  const base = mobile
+    ? `https://wa.me/${normalizedPhone}`
+    : `https://web.whatsapp.com/send?phone=${normalizedPhone}`;
+  return encodedMessage ? `${base}${mobile ? '?' : '&'}${encodedMessage}` : base;
+}
+
+function renderWhatsAppMessage(template: string, context: WhatsAppMessageContext = {}) {
+  const values = {
+    name: context.name || '',
+    company: context.companyType || '',
+    companyType: context.companyType || '',
+    phone: context.phone || '',
+    website: context.website || '',
+    address: context.address || '',
+    source: context.source || ''
+  };
+
+  return template.replace(/\{(name|company|companyType|phone|website|address|source)\}/g, (_, key: keyof typeof values) => values[key] || '');
+}
+
+async function copyTextToClipboard(text: string) {
+  if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) return false;
+  await navigator.clipboard.writeText(text);
+  return true;
+}
 
 function quoteCsvValue(value: unknown) {
   const original = value == null ? '' : String(value);
@@ -679,6 +754,7 @@ function getMembershipToken() {
 }
 
 const searchFormStorageKey = 'leadgen-search-form-v1';
+const whatsappStorageBaseKey = 'leadgen-whatsapp-state-v1';
 
 type SavedSearchForm = {
   keyword?: string;
@@ -694,10 +770,29 @@ type SavedSearchForm = {
   areaTargets?: string[];
 };
 
+type SavedWhatsAppState = {
+  message?: unknown;
+  queue?: unknown;
+};
+
 function getSavedSearchForm(): SavedSearchForm {
   if (typeof window === 'undefined') return {};
   try {
     const saved = JSON.parse(window.localStorage.getItem(searchFormStorageKey) || '{}');
+    return saved && typeof saved === 'object' ? saved : {};
+  } catch {
+    return {};
+  }
+}
+
+function getWhatsAppStorageKey(userId = '') {
+  return `${whatsappStorageBaseKey}:${userId || 'anonymous'}`;
+}
+
+function getSavedWhatsAppState(storageKey = getWhatsAppStorageKey()): SavedWhatsAppState {
+  if (typeof window === 'undefined') return {};
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(storageKey) || '{}');
     return saved && typeof saved === 'object' ? saved : {};
   } catch {
     return {};
@@ -723,6 +818,38 @@ function normalizeEmailDiscoveryDepth(value: unknown) {
 function normalizeSavedAreaTargets(value: unknown) {
   if (!Array.isArray(value)) return [];
   return value.filter((target): target is string => typeof target === 'string' && target.trim().length > 0);
+}
+
+function normalizeSavedWhatsAppQueue(value: unknown) {
+  if (!Array.isArray(value)) return [];
+
+  const seen = new Set<string>();
+  return value.flatMap((item, index) => {
+    if (!item || typeof item !== 'object') return [];
+    const record = item as Record<string, unknown>;
+    const rawPhone = typeof record.phone === 'string' ? record.phone.trim() : '';
+    const normalizedPhone = normalizeWhatsAppPhone(
+      typeof record.normalizedPhone === 'string' && record.normalizedPhone.trim() ? record.normalizedPhone : rawPhone
+    );
+    if (!normalizedPhone || seen.has(normalizedPhone)) return [];
+    seen.add(normalizedPhone);
+
+    const name = typeof record.name === 'string' && record.name.trim() ? record.name.trim() : normalizedPhone;
+    const leadId = typeof record.leadId === 'string' && record.leadId.trim() ? record.leadId.trim() : undefined;
+    const source = typeof record.source === 'string' ? record.source : '';
+    const id = typeof record.id === 'string' && record.id.trim()
+      ? record.id.trim()
+      : `${leadId || 'lead'}:${normalizedPhone}:${index}`;
+
+    return [{
+      id,
+      leadId,
+      name,
+      phone: rawPhone || normalizedPhone,
+      normalizedPhone,
+      source
+    }];
+  });
 }
 
 function authenticatedHeaders(headers?: HeadersInit) {
@@ -825,6 +952,12 @@ function App() {
   const [recipientInput, setRecipientInput] = useState('');
   const [emailAiKeywords, setEmailAiKeywords] = useState('');
   const [emailDrafts, setEmailDrafts] = useState<EmailDraft[]>([]);
+  const [whatsAppAiKeywords, setWhatsAppAiKeywords] = useState('');
+  const [whatsAppDrafts, setWhatsAppDrafts] = useState<WhatsAppDraft[]>([]);
+  const [whatsAppMessage, setWhatsAppMessage] = useState('');
+  const [whatsAppQueue, setWhatsAppQueue] = useState<WhatsAppQueueItem[]>([]);
+  const [campaignExpanded, setCampaignExpanded] = useState(false);
+  const [whatsAppExpanded, setWhatsAppExpanded] = useState(false);
   const [subject, setSubject] = useState(defaultSubject);
   const [body, setBody] = useState(defaultBody);
   const [bodyHtml, setBodyHtml] = useState(defaultBodyHtml);
@@ -833,6 +966,7 @@ function App() {
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState('');
   const [translationMenuOpen, setTranslationMenuOpen] = useState(false);
+  const [whatsAppTranslationMenuOpen, setWhatsAppTranslationMenuOpen] = useState(false);
   const [countryMenuOpen, setCountryMenuOpen] = useState(false);
   const [countryFilter, setCountryFilter] = useState('');
   const [areaPickerOpen, setAreaPickerOpen] = useState(false);
@@ -846,6 +980,9 @@ function App() {
   const countryPickerRef = useRef<HTMLDivElement | null>(null);
   const areaPickerRef = useRef<HTMLDivElement | null>(null);
   const translationMenuRef = useRef<HTMLDivElement | null>(null);
+  const whatsAppTranslationMenuRef = useRef<HTMLDivElement | null>(null);
+  const whatsAppMessageRef = useRef<HTMLTextAreaElement | null>(null);
+  const loadedWhatsAppStorageKeyRef = useRef('');
   const countryInitializedRef = useRef(false);
   const restoredTranslatedKeywordRef = useRef(Boolean(savedSearchForm.translatedKeyword));
 
@@ -901,6 +1038,7 @@ function App() {
       return new Date(right.updatedAt || right.createdAt || 0).getTime() - new Date(left.updatedAt || left.createdAt || 0).getTime();
     });
   }, [activeLeadKeyword, leadKeywordTabs, payload.leads]);
+  const recipientCount = useMemo(() => parseRecipientEmails(recipientInput).length, [recipientInput]);
   const activeLeadTab = useMemo(
     () => leadKeywordTabs.find((item) => item.key === activeLeadKeyword) || null,
     [activeLeadKeyword, leadKeywordTabs]
@@ -972,6 +1110,30 @@ function App() {
   ]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      if (!authLoaded) return;
+      const storageKey = getWhatsAppStorageKey(authState.user?.id || '');
+      window.localStorage.setItem(storageKey, JSON.stringify({
+        message: whatsAppMessage,
+        queue: whatsAppQueue
+      }));
+    } catch {
+      // Ignore quota / serialization failures.
+    }
+  }, [authLoaded, authState.user?.id, whatsAppMessage, whatsAppQueue]);
+
+  useEffect(() => {
+    if (!authLoaded) return;
+    const storageKey = getWhatsAppStorageKey(authState.user?.id || '');
+    if (loadedWhatsAppStorageKeyRef.current === storageKey) return;
+    loadedWhatsAppStorageKeyRef.current = storageKey;
+    const savedWhatsAppState = getSavedWhatsAppState(storageKey);
+    setWhatsAppMessage(typeof savedWhatsAppState.message === 'string' ? savedWhatsAppState.message : '');
+    setWhatsAppQueue(normalizeSavedWhatsAppQueue(savedWhatsAppState.queue));
+  }, [authLoaded, authState.user?.id]);
+
+  useEffect(() => {
     setPageTargets([]);
   }, [searchKeyword, area, maxResults, includeEmailDiscovery, emailDiscoveryDepth, countryCode, searchMode, placeType]);
 
@@ -1011,6 +1173,9 @@ function App() {
       }
       if (!translationMenuRef.current?.contains(event.target as Node)) {
         setTranslationMenuOpen(false);
+      }
+      if (!whatsAppTranslationMenuRef.current?.contains(event.target as Node)) {
+        setWhatsAppTranslationMenuOpen(false);
       }
     }
 
@@ -1538,6 +1703,7 @@ function App() {
     setDryRun(nextDryRun);
     setCampaignPreview(null);
     setActiveSettingsView('workspace');
+    setCampaignExpanded(true);
     setMessage('已载入发送任务内容，请检查后再手动发送。');
     window.setTimeout(() => {
       document.querySelector('.campaign-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1558,7 +1724,127 @@ function App() {
       return merged.join(', ');
     });
     setCampaignPreview(null);
+    setCampaignExpanded(true);
     setMessage(`已将 ${leadEmails.length} 个邮箱加入收件人。`);
+  }
+
+  function buildWhatsAppMessageContext(item: WhatsAppQueueItem, lead?: Lead | null): WhatsAppMessageContext {
+    return {
+      name: lead?.name || item.name,
+      companyType: lead?.companyType || '',
+      phone: lead?.phone || item.normalizedPhone,
+      website: lead?.website || item.source || '',
+      address: lead?.address || '',
+      source: lead?.website || lead?.address || item.source || ''
+    };
+  }
+
+  function insertWhatsAppTemplateToken(token: string) {
+    const target = whatsAppMessageRef.current;
+    if (!target) {
+      setWhatsAppMessage((current) => `${current}${token}`);
+      return;
+    }
+
+    const start = target.selectionStart ?? whatsAppMessage.length;
+    const end = target.selectionEnd ?? whatsAppMessage.length;
+    const nextValue = `${whatsAppMessage.slice(0, start)}${token}${whatsAppMessage.slice(end)}`;
+    setWhatsAppMessage(nextValue);
+    window.requestAnimationFrame(() => {
+      target.focus();
+      const cursor = start + token.length;
+      target.setSelectionRange(cursor, cursor);
+    });
+  }
+
+  function addLeadPhoneToWhatsAppQueue(lead: Lead) {
+    const rawPhone = String(lead.phone || '').trim();
+    const normalizedPhone = normalizeWhatsAppPhone(rawPhone);
+    if (!normalizedPhone) {
+      setMessage('This lead does not have a usable phone number yet.');
+      return;
+    }
+
+    let alreadyQueued = false;
+    setWhatsAppQueue((current) => {
+      alreadyQueued = current.some((item) => item.normalizedPhone === normalizedPhone);
+      if (alreadyQueued) return current;
+      return [
+        ...current,
+        {
+          id: `${lead.id}:${normalizedPhone}`,
+          leadId: lead.id,
+          name: lead.name || lead.companyType || normalizedPhone,
+          phone: rawPhone,
+          normalizedPhone,
+          source: lead.website || lead.address || lead.companyType || ''
+        }
+      ];
+    });
+    setWhatsAppExpanded(true);
+    setMessage(alreadyQueued ? 'This phone number is already in the WhatsApp queue.' : `Added ${lead.name || normalizedPhone} to the WhatsApp queue.`);
+  }
+
+  function removeWhatsAppQueueItem(itemId: string) {
+    setWhatsAppQueue((current) => current.filter((item) => item.id !== itemId));
+  }
+
+  async function copyWhatsAppMessage() {
+    if (!whatsAppMessage.trim()) {
+      setMessage('Enter a WhatsApp message first.');
+      return;
+    }
+
+    try {
+      const copied = await copyTextToClipboard(whatsAppMessage);
+      setMessage(copied ? 'WhatsApp message copied.' : 'Clipboard copy is not supported in this browser.');
+    } catch {
+      setMessage('Clipboard copy is not supported in this browser.');
+    }
+  }
+
+  function openWhatsAppPhone(phone: string, options?: { quiet?: boolean; context?: WhatsAppMessageContext }) {
+    const renderedMessage = renderWhatsAppMessage(whatsAppMessage, options?.context);
+    const url = buildWhatsAppUrl(phone, renderedMessage);
+    if (!url) {
+      setMessage('This WhatsApp phone number is not valid.');
+      return false;
+    }
+    const openedWindow = window.open(url, '_blank');
+    if (!openedWindow) {
+      setMessage('浏览器拦截了 WhatsApp 新窗口，号码已保留在队列中。请允许弹窗后再试。');
+      return false;
+    }
+    try {
+      openedWindow.opener = null;
+    } catch {
+      // Some browsers block opener access for cross-origin windows.
+    }
+    if (!options?.quiet) {
+      setMessage(isMobileBrowser() ? 'WhatsApp opened on this device.' : 'WhatsApp Web opened in a new tab.');
+    }
+    return true;
+  }
+
+  function openNextWhatsAppChat() {
+    if (!whatsAppQueue.length) {
+      setMessage('Add at least one lead phone number to the WhatsApp queue first.');
+      return;
+    }
+    const nextItem = whatsAppQueue[0];
+    const nextLead = payload.leads.find((lead) => lead.id === nextItem.leadId) || null;
+    const opened = openWhatsAppPhone(nextItem.normalizedPhone, {
+      quiet: true,
+      context: buildWhatsAppMessageContext(nextItem, nextLead)
+    });
+    if (!opened) return;
+    setWhatsAppQueue((current) => current.slice(1));
+    setMessage(`已打开下一条：${nextItem.name}。`);
+  }
+
+  function clearWhatsAppQueue() {
+    setWhatsAppQueue([]);
+    setMessage('WhatsApp queue cleared.');
   }
 
   async function enrichLeadWaterfall(lead: Lead) {
@@ -1608,6 +1894,28 @@ function App() {
     }
   }
 
+  async function translateWhatsAppMessage(targetLanguage: string) {
+    setBusy('translate');
+    setMessage('');
+    setWhatsAppTranslationMenuOpen(false);
+    try {
+      const result = await api<EmailTranslation>('/api/whatsapp/translate', {
+        method: 'POST',
+        body: JSON.stringify({
+          body: whatsAppMessage,
+          targetLanguage
+        })
+      });
+      setWhatsAppMessage(result.body);
+      setWhatsAppExpanded(true);
+      setMessage(`WhatsApp 消息已翻译为 ${result.targetLanguage}。`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '翻译失败');
+    } finally {
+      setBusy('');
+    }
+  }
+
   async function generateEmailDrafts() {
     setBusy('email-ai');
     setMessage('');
@@ -1630,6 +1938,29 @@ function App() {
     }
   }
 
+  async function generateWhatsAppDrafts() {
+    setBusy('whatsapp-ai');
+    setMessage('');
+    try {
+      const result = await api<{ drafts: WhatsAppDraft[] }>('/api/whatsapp/generate-drafts', {
+        method: 'POST',
+        body: JSON.stringify({
+          keywords: whatsAppAiKeywords || keyword,
+          country: selectedCountry.name,
+          region: area,
+          audience: keywordStrategy?.customerProfile || searchKeyword
+        })
+      });
+      setWhatsAppDrafts(result.drafts);
+      setWhatsAppExpanded(true);
+      setMessage(`已生成 ${result.drafts.length} 版 WhatsApp 首次触达内容，请选择合适的一版。`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'AI WhatsApp 文案生成失败');
+    } finally {
+      setBusy('');
+    }
+  }
+
   function applyEmailDraft(draft: EmailDraft) {
     const confirmed = window.confirm('是否直接替换当前主题和正文？');
     if (!confirmed) return;
@@ -1638,6 +1969,14 @@ function App() {
     setBodyHtml(draft.htmlBody);
     setCampaignPreview(null);
     setMessage('已替换为选中的 AI 邮件版本。');
+  }
+
+  function applyWhatsAppDraft(draft: WhatsAppDraft) {
+    const confirmed = window.confirm('是否直接替换当前 WhatsApp 消息内容？');
+    if (!confirmed) return;
+    setWhatsAppMessage(draft.message);
+    setWhatsAppExpanded(true);
+    setMessage('已替换为选中的 WhatsApp 首次触达版本。');
   }
 
   async function previewEmailCampaign() {
@@ -1806,6 +2145,8 @@ function App() {
             <Search size={18} />
             <h2>搜索商户</h2>
           </div>
+          <div className="search-form-grid">
+            <div className="search-form-main">
           <div className="search-keyword-field">
             <div className="search-field-header">
               <span>关键词</span>
@@ -1905,6 +2246,8 @@ function App() {
               )}
             </div>
           )}
+            </div>
+            <div className="search-form-side">
           <label>
             区域
             <div className="area-combobox" ref={areaPickerRef}>
@@ -2092,13 +2435,36 @@ function App() {
               <RefreshCw size={18} /> {busy === 'search-more' ? '加载中' : `加载下一页 (${pageTargets.length})`}
             </button>
           )}
+            </div>
+          </div>
         </div>
 
-        <div className="panel campaign-panel">
-          <div className="panel-title">
-            <Send size={18} />
-            <h2>邮件活动</h2>
+        <div className={campaignExpanded ? 'panel campaign-panel expanded' : 'panel campaign-panel collapsed'}>
+          <div className="campaign-panel-header">
+            <div className="panel-title campaign-panel-title">
+              <Send size={18} />
+              <div>
+                <h2>邮件活动</h2>
+                <p>收件人、AI 文案、预览和邮件发送集中在这里</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="campaign-toggle-button"
+              onClick={() => setCampaignExpanded((expanded) => !expanded)}
+              aria-expanded={campaignExpanded}
+            >
+              {campaignExpanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
+              {campaignExpanded ? '收起' : '展开'}
+            </button>
           </div>
+          <div className="campaign-summary-row">
+            <span><Mail size={14} /> 收件人 {recipientCount}</span>
+            <span><Send size={14} /> {subject.trim() ? '主题已填' : '主题未填'}</span>
+            <span className={sendDisabledReason ? 'warning' : 'success'}><ShieldCheck size={14} /> {sendDisabledReason ? '待配置' : '可发送'}</span>
+          </div>
+          {campaignExpanded && (
+          <div className="campaign-panel-body">
           <label>
             收件人
             <textarea
@@ -2219,6 +2585,171 @@ function App() {
             <ShieldCheck size={18} />
             <span>默认限制每日批量、自动跳过退订名单，并在正文追加退订链接。</span>
           </div>
+          </div>
+          )}
+        </div>
+
+        <div className={whatsAppExpanded ? 'panel campaign-panel whatsapp-activity-panel expanded' : 'panel campaign-panel whatsapp-activity-panel collapsed'}>
+          <div className="campaign-panel-header">
+            <div className="panel-title campaign-panel-title">
+              <MessageCircle size={18} />
+              <div>
+                <h2>WhatsApp 活动</h2>
+                <p>消息预填、号码队列和逐条打开集中在这里</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="campaign-toggle-button"
+              onClick={() => setWhatsAppExpanded((expanded) => !expanded)}
+              aria-expanded={whatsAppExpanded}
+            >
+              {whatsAppExpanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
+              {whatsAppExpanded ? '收起' : '展开'}
+            </button>
+          </div>
+          <div className="campaign-summary-row">
+            <span><MessageCircle size={14} /> 队列 {whatsAppQueue.length}</span>
+            <span><Send size={14} /> {whatsAppMessage.trim() ? '消息已填' : '消息未填'}</span>
+            <span className="warning"><ShieldCheck size={14} /> 手动确认发送</span>
+          </div>
+          {whatsAppExpanded && (
+            <div className="campaign-panel-body">
+              <div className="whatsapp-panel">
+                <div className="search-field-header">
+                  <span>AI WhatsApp 关键词</span>
+                  <button
+                    type="button"
+                    className="ai-analysis-button"
+                    onClick={generateWhatsAppDrafts}
+                    disabled={busy === 'whatsapp-ai' || !(whatsAppAiKeywords || keyword).trim()}
+                  >
+                    <Sparkles size={15} /> {busy === 'whatsapp-ai' ? '生成中...' : 'AI关键词分析'}
+                  </button>
+                </div>
+                <input
+                  value={whatsAppAiKeywords}
+                  onChange={(event) => setWhatsAppAiKeywords(event.target.value)}
+                  placeholder="LCD屏幕出口, phone repair store, 手机维修店"
+                />
+                {!!whatsAppDrafts.length && (
+                  <div className="email-draft-list">
+                    {whatsAppDrafts.map((draft) => (
+                      <div className="email-draft-card" key={draft.id}>
+                        <div className="email-draft-head">
+                          <div>
+                            <strong>{draft.angle}</strong>
+                            <span>{draft.message}</span>
+                          </div>
+                          <button type="button" className="primary-small" onClick={() => applyWhatsAppDraft(draft)}>
+                            使用这版
+                          </button>
+                        </div>
+                        {draft.followUp && <p>{draft.followUp}</p>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="search-field-header">
+                  <span>发送队列</span>
+                  <button
+                    type="button"
+                    className="ai-analysis-button"
+                    onClick={openNextWhatsAppChat}
+                    disabled={!whatsAppQueue.length}
+                  >
+                    <MessageCircle size={15} /> {whatsAppQueue.length ? `打开下一条 (${whatsAppQueue.length})` : '等待加入号码'}
+                  </button>
+                </div>
+                <label>
+                  消息内容
+                  <textarea
+                    ref={whatsAppMessageRef}
+                    className="whatsapp-message-input"
+                    value={whatsAppMessage}
+                    onChange={(event) => setWhatsAppMessage(event.target.value)}
+                    rows={4}
+                    placeholder="支持 {name} {company} {phone} {address} {website} {source}"
+                  />
+                </label>
+                <div className="campaign-actions">
+                  <div className="translation-action" ref={whatsAppTranslationMenuRef}>
+                    <button
+                      type="button"
+                      onClick={() => setWhatsAppTranslationMenuOpen((open) => !open)}
+                      disabled={busy === 'preview' || busy === 'send' || busy === 'translate'}
+                    >
+                      <Languages size={18} /> {busy === 'translate' ? '翻译中' : '一键翻译'}
+                    </button>
+                    {whatsAppTranslationMenuOpen && (
+                      <div className="translation-menu" role="menu">
+                        <button type="button" onClick={() => translateWhatsAppMessage('en')} role="menuitem">
+                          翻译成英文
+                        </button>
+                        <button type="button" onClick={() => translateWhatsAppMessage(selectedCountry.language)} role="menuitem">
+                          目标地域官方语言
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="whatsapp-template-row" aria-label="WhatsApp 模板变量">
+                  <span>模板变量</span>
+                  {[
+                    { label: '姓名', token: '{name}' },
+                    { label: '公司', token: '{company}' },
+                    { label: '电话', token: '{phone}' },
+                    { label: '地址', token: '{address}' },
+                    { label: '网站', token: '{website}' }
+                  ].map((item) => (
+                    <button type="button" key={item.token} className="mini-button" onClick={() => insertWhatsAppTemplateToken(item.token)}>
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="campaign-actions whatsapp-actions">
+                  <button type="button" onClick={copyWhatsAppMessage} disabled={!whatsAppMessage.trim()}>
+                    <Copy size={18} /> 复制消息
+                  </button>
+                  <button type="button" className="danger-action" onClick={clearWhatsAppQueue} disabled={!whatsAppQueue.length}>
+                    <Trash2 size={18} /> 清空队列
+                  </button>
+                </div>
+                <div className="whatsapp-note">
+                  WhatsApp 只会预填消息，真正发送仍需在 WhatsApp 里手动确认。
+                </div>
+                {!!whatsAppQueue.length && (
+                  <div className="whatsapp-queue">
+                    {whatsAppQueue.map((item, index) => (
+                      <div className="whatsapp-queue-item" key={item.id}>
+                        <div className="whatsapp-queue-meta">
+                          <strong>{index + 1}. {item.name}</strong>
+                          <span>{item.normalizedPhone}</span>
+                        </div>
+                        <div className="whatsapp-queue-actions">
+                          <button
+                            type="button"
+                            className="mini-button"
+                            onClick={() => {
+                              const lead = payload.leads.find((candidate) => candidate.id === item.leadId) || null;
+                              openWhatsAppPhone(item.normalizedPhone, {
+                                context: buildWhatsAppMessageContext(item, lead)
+                              });
+                            }}
+                          >
+                            <MessageCircle size={14} /> 打开
+                          </button>
+                          <button type="button" className="mini-button" onClick={() => removeWhatsAppQueueItem(item.id)}>
+                            <X size={14} /> 移除
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </section>
 
@@ -2466,6 +2997,14 @@ function App() {
                     >
                       <Send size={15} /> 发送邮件
                     </button>
+                    <button
+                      className="mini-button"
+                      onClick={() => addLeadPhoneToWhatsAppQueue(lead)}
+                      disabled={!lead.phone}
+                      title={lead.phone ? 'Add this phone number to the WhatsApp queue' : 'This lead has no phone number'}
+                    >
+                      <MessageCircle size={15} /> WhatsApp
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -2688,7 +3227,9 @@ const usageLabels: Record<string, string> = {
   discover_email: '邮箱发现',
   ai_keyword_analysis: 'AI关键词分析',
   ai_email_generation: 'AI邮件生成',
+  ai_whatsapp_generation: 'AI WhatsApp生成',
   translate_email: '邮件翻译',
+  translate_whatsapp: 'WhatsApp翻译',
   send_email: '真实发送',
   export_csv: 'CSV导出'
 };

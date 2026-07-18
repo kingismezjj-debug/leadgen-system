@@ -26,7 +26,7 @@ test('translateEmailCampaign translates subject and sanitized html while preserv
 
   const result = await translateEmailCampaign({
     subject: 'Hello {{name}}',
-    body: '',
+    body: 'Hello {name}',
     htmlBody: '<p>Hello {{name}}</p><img src="x" onerror="alert(1)"><script>alert(1)</script>',
     targetLanguage: 'es',
     apiKey: 'test-key',
@@ -39,4 +39,30 @@ test('translateEmailCampaign translates subject and sanitized html while preserv
   assert.equal(result.body, 'Hola {{name}}');
   assert.equal(calls[0].format, 'text');
   assert.equal(calls[1].format, 'html');
+});
+
+test('translateEmailCampaign preserves single-brace template fields in plain text', async () => {
+  const fakeFetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    return new Response(JSON.stringify({
+      data: {
+        translations: body.q.map((value) => ({
+          translatedText: value.replace('Hello', 'Hola')
+        }))
+      }
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+
+  const result = await translateEmailCampaign({
+    subject: 'Hello {name}',
+    body: 'Hello {name}',
+    htmlBody: '',
+    targetLanguage: 'es',
+    apiKey: 'test-key',
+    fetchImpl: fakeFetch
+  });
+
+  assert.equal(result.subject, 'Hola {name}');
+  assert.equal(result.body, 'Hola {name}');
+  assert.equal(result.htmlBody, '');
 });

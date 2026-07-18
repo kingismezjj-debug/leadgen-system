@@ -15,7 +15,9 @@ export const plans = {
       discover_email: 10,
       ai_keyword_analysis: 3,
       ai_email_generation: 3,
+      ai_whatsapp_generation: 3,
       translate_email: 3,
+      translate_whatsapp: 3,
       send_email: 5,
       export_csv: 0
     },
@@ -30,7 +32,9 @@ export const plans = {
       discover_email: 500,
       ai_keyword_analysis: 30,
       ai_email_generation: 30,
+      ai_whatsapp_generation: 30,
       translate_email: 30,
+      translate_whatsapp: 30,
       send_email: 300,
       export_csv: 20
     },
@@ -45,7 +49,9 @@ export const plans = {
       discover_email: 5000,
       ai_keyword_analysis: 300,
       ai_email_generation: 300,
+      ai_whatsapp_generation: 300,
       translate_email: 300,
+      translate_whatsapp: 300,
       send_email: 3000,
       export_csv: 200
     },
@@ -60,7 +66,9 @@ export const plans = {
       discover_email: null,
       ai_keyword_analysis: null,
       ai_email_generation: null,
+      ai_whatsapp_generation: null,
       translate_email: null,
+      translate_whatsapp: null,
       send_email: null,
       export_csv: null
     },

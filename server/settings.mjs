@@ -104,6 +104,10 @@ function numberOrFallback(value, fallback) {
   return Number.isFinite(number) && number > 0 ? number : fallback;
 }
 
+function canManageGlobalSettings(user = null) {
+  return ['super_admin', 'admin'].includes(user?.role || '');
+}
+
 function mergeSettings(saved) {
   return {
     ...config,
@@ -134,9 +138,9 @@ function mergeSettings(saved) {
   };
 }
 
-function sanitizeForClient(saved, runtime) {
+function sanitizeForClient(saved, runtime, user = null) {
   const emailReadiness = getEmailReadiness(runtime);
-  return {
+  const clientSettings = {
     googleMapsApiKey: runtime.googleMapsApiKey,
     googleTranslateApiKey: runtime.googleTranslateApiKey,
     openAiBaseUrl: runtime.openAiBaseUrl,
@@ -170,6 +174,39 @@ function sanitizeForClient(saved, runtime) {
     emailReady: emailReadiness.readyForRealSend,
     emailIssues: emailReadiness.issues
   };
+
+  if (canManageGlobalSettings(user)) return clientSettings;
+
+  return {
+    ...clientSettings,
+    googleMapsApiKey: '',
+    googleTranslateApiKey: '',
+    openAiBaseUrl: '',
+    openAiModel: '',
+    enrichmentEmailApiEndpoint: '',
+    yelpApiKey: '',
+    foursquareApiKey: '',
+    hunterApiKey: '',
+    smtp: {
+      host: '',
+      port: runtime.smtp.port,
+      secure: false,
+      user: '',
+      pass: '',
+      from: ''
+    },
+    jarvisEmailEndpoint: '',
+    jarvisEmailToken: '',
+    unsubscribeUrl: '',
+    emailDailyLimit: '',
+    hasSmtpPass: false,
+    hasJarvisEmailToken: false,
+    hasOpenAiApiKey: false,
+    hasEnrichmentEmailApiKey: false,
+    hasYelpApiKey: false,
+    hasFoursquareApiKey: false,
+    hasHunterApiKey: false
+  };
 }
 
 export async function readSavedSettings() {
@@ -183,12 +220,12 @@ export async function getRuntimeSettings() {
   return mergeSettings(await readSavedSettings());
 }
 
-export async function getClientSettings() {
+export async function getClientSettings(user = null) {
   const saved = await readSavedSettings();
-  return sanitizeForClient(saved, mergeSettings(saved));
+  return sanitizeForClient(saved, mergeSettings(saved), user);
 }
 
-export async function saveClientSettings(input = {}) {
+export async function saveClientSettings(input = {}, user = null) {
   return enqueueSettingsMutation(async () => {
     const release = await acquireSettingsLock();
     try {
@@ -210,7 +247,7 @@ export async function saveClientSettings(input = {}) {
         smtp: {
           host: String(input.smtp?.host ?? current.smtp?.host ?? '').trim(),
           port: String(input.smtp?.port ?? current.smtp?.port ?? '').trim(),
-          secure: Boolean(input.smtp?.secure),
+          secure: input.smtp && 'secure' in input.smtp ? Boolean(input.smtp.secure) : Boolean(current.smtp?.secure),
           user: String(input.smtp?.user ?? current.smtp?.user ?? '').trim(),
           pass: input.smtp?.pass ? String(input.smtp.pass) : current.smtp?.pass || '',
           from: String(input.smtp?.from ?? current.smtp?.from ?? '').trim()
@@ -222,7 +259,7 @@ export async function saveClientSettings(input = {}) {
       };
 
       await writeSettingsAtomic(next);
-      return sanitizeForClient(next, mergeSettings(next));
+      return sanitizeForClient(next, mergeSettings(next), user);
     } finally {
       await release();
     }
