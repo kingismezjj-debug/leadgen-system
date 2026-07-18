@@ -1,11 +1,11 @@
-# Google Maps 获客系统
+# IZYLEADS 获客系统
 
-一个面向本地商户获客的 MVP：用关键词和区域调用 Google Places API 获取商户线索，再做官网公开邮箱发现、线索去重、CSV 导出和邮件活动 dry-run/发送。
+一个面向本地商户和外贸获客的工作台：用关键词、行业和区域整理商户线索，再做官网公开邮箱发现、线索去重、CSV 导出、邮件活动和 WhatsApp 活动。
 
 ## 重要边界
 
-- 采集层使用 Google Places API，不直接爬 Google Maps 页面。
-- Google Places 通常返回商户名称、类型、地址、电话、官网、评分、地图链接等；邮箱不属于 Places 常规返回字段，本项目只会在商户官网的少量公开页面尝试发现邮箱。
+- 线索信息来自用户输入、公开商户资料、公开网页和用户授权配置的数据服务。
+- 公开商户资料通常可能包含商户名称、类型、地址、电话、官网和评分等；邮箱通常需要从商户官网的公开页面尝试发现。
 - 邮件发送默认是 dry-run。真实发送需要配置 SMTP 或 `JARVIS_EMAIL_ENDPOINT`，并遵守 CAN-SPAM、退订、限频和本地法律要求。
 
 ## 启动
@@ -71,8 +71,6 @@ server/data/store.json
 
 这个 MVP 先用 JSON 存储，后续可替换为 SQLite/Postgres，并加入账号、团队、任务队列、退订落地页和发送节流。
 
-## 官方文档
+## 维护说明
 
-- Google Places Text Search New: https://developers.google.com/maps/documentation/places/web-service/text-search
-- Google Places API FieldMask: https://developers.google.com/maps/documentation/places/web-service/choose-fields
-- Google Places data fields and billing tiers: https://developers.google.com/maps/documentation/places/web-service/data-fields
+生产环境请通过 `.env` 或管理员设置维护服务密钥、发信配置和退订地址，避免将运行数据、日志或密钥提交到代码仓库。

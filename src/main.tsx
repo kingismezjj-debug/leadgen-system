@@ -107,7 +107,7 @@ type StorePayload = {
   sendLog: Array<{ id: string; leadId?: string; status: string; to?: string; reason?: string; at: string }>;
 };
 
-type SettingsView = 'workspace' | 'google' | 'translate' | 'ai' | 'email' | 'members' | 'tasks' | 'delivery';
+type SettingsView = 'workspace' | 'google' | 'translate' | 'ai' | 'email' | 'members' | 'tasks' | 'delivery' | 'legal';
 type MembershipUser = {
   id: string;
   email: string;
@@ -132,6 +132,220 @@ type AuthState = {
   plans: Record<string, MembershipPlan>;
   usage: UsageSummary[];
 };
+
+type LegalDocumentKey = 'about' | 'privacy' | 'terms' | 'antiSpam' | 'guide';
+type LegalDocument = {
+  title: string;
+  subtitle: string;
+  updatedAt: string;
+  sections: Array<{
+    heading: string;
+    items: string[];
+  }>;
+};
+
+const legalDocuments: Record<LegalDocumentKey, LegalDocument> = {
+  about: {
+    title: '关于 IZYLEADS',
+    subtitle: 'IZYLEADS 是面向外贸、B2B 销售和本地服务拓展团队的获客工作台。',
+    updatedAt: '2026-07-18',
+    sections: [
+      {
+        heading: '我们提供什么',
+        items: [
+          '帮助用户围绕目标行业、地区和关键词整理潜在线索，并集中管理商户名称、网站、电话、邮箱、地址和联系状态。',
+          '提供邮件活动、WhatsApp 活动、线索导出、搜索策略分析、邮件内容生成、消息翻译和任务记录等工作流工具。',
+          '系统面向合法商业开发场景，用户应自行判断目标客户适配度、沟通频率和当地合规要求。'
+        ]
+      },
+      {
+        heading: '我们不做什么',
+        items: [
+          '我们不出售垃圾邮件名单，不承诺每条线索都能联系成功，也不保证公开资料在任何时间都完整或最新。',
+          '我们不代表用户发送违法、欺骗性、骚扰性或侵犯第三方权益的内容。'
+        ]
+      },
+      {
+        heading: '联系方式',
+        items: [
+          '如需处理账号、数据删除、合规或服务问题，请通过网站管理员提供的官方联系方式联系我们。'
+        ]
+      }
+    ]
+  },
+  privacy: {
+    title: '隐私政策',
+    subtitle: '本政策说明 IZYLEADS 如何处理账号信息、线索数据、发送记录和用户配置。',
+    updatedAt: '2026-07-18',
+    sections: [
+      {
+        heading: '我们可能处理的数据',
+        items: [
+          '账号资料：邮箱、名称、角色、会员等级、登录会话、使用额度和操作时间。',
+          '线索资料：用户搜索或导入产生的商户名称、网站、电话、公开邮箱、地址、标签、来源页面和补全状态。',
+          '活动资料：邮件收件人、主题、正文、预览、发送结果、退订状态、WhatsApp 队列和消息模板。',
+          '系统配置：仅管理员可维护的服务密钥、发信配置、退订地址和额度设置。敏感密钥不会在普通用户界面展示。'
+        ]
+      },
+      {
+        heading: '数据用途',
+        items: [
+          '用于提供线索整理、联系信息发现、消息草稿、发送记录、退订处理、权限控制和安全审计。',
+          '用于排查错误、限制滥用、维护系统稳定性，以及根据用户要求删除或导出数据。',
+          '不会将用户账号数据或私有业务数据出售给第三方。'
+        ]
+      },
+      {
+        heading: '数据来源与责任',
+        items: [
+          '线索信息可能来自用户输入、用户导入、公开网页、商户公开联系方式或用户授权使用的外部数据服务。',
+          '用户应确保其搜索、保存、导出和触达行为符合目标地区关于隐私、营销、数据抓取和反骚扰的规定。',
+          '如果某条公开联系信息不准确或不应继续使用，用户应及时删除、标记或停止触达。'
+        ]
+      },
+      {
+        heading: '保存与删除',
+        items: [
+          '线索、发送记录和任务记录会保存在当前账号对应的数据空间中；super admin 可进行全局管理。',
+          '用户可以删除自己的线索、标签、发送记录和任务记录；管理员可根据服务运营需要处理异常或违规数据。',
+          '退订记录会保留用于避免继续向已退订邮箱发送商业邮件。'
+        ]
+      },
+      {
+        heading: '安全',
+        items: [
+          '系统通过账号登录、角色权限和用户数据隔离限制普通用户访问其他账号的数据。',
+          '管理员配置的服务密钥仅用于系统功能调用，不会展示给普通用户。',
+          '用户仍应妥善保管账号密码，避免共享账号或在不可信设备上长期登录。'
+        ]
+      }
+    ]
+  },
+  terms: {
+    title: '服务条款',
+    subtitle: '使用 IZYLEADS 即表示用户同意以合法、克制、透明的方式开展商业沟通。',
+    updatedAt: '2026-07-18',
+    sections: [
+      {
+        heading: '允许的用途',
+        items: [
+          '用于合法的 B2B 客户开发、市场研究、公开商户资料整理、销售跟进和客户关系管理。',
+          '用户可以基于真实业务需求创建搜索策略、整理线索、生成草稿、导出数据并进行人工确认后的触达。'
+        ]
+      },
+      {
+        heading: '禁止的用途',
+        items: [
+          '不得发送欺骗性、违法、仿冒、恶意、骚扰、歧视、侵权或明显无关的推广内容。',
+          '不得规避退订、频率限制、账号权限、发送限制或系统安全机制。',
+          '不得上传、保存或处理明知来自非法来源的数据。'
+        ]
+      },
+      {
+        heading: '用户责任',
+        items: [
+          '用户负责确认线索适用性、联系理由、消息内容、发送频率和目标地区合规要求。',
+          '用户负责维护自己的账号安全，并对账号下的搜索、导出、发送和删除行为负责。',
+          '如果用户违反条款或造成投诉、滥用、法律风险，管理员可限制、暂停或停用账号。'
+        ]
+      },
+      {
+        heading: '服务限制',
+        items: [
+          '公开网页和商户资料可能变更、缺失、阻断或不可访问，系统不保证所有线索都能发现邮箱或电话。',
+          'AI 生成内容仅供参考，正式发送前用户必须自行审核事实、语气、合规性和目标客户适配度。',
+          '系统可能因网络、第三方服务、发信服务、浏览器策略或目标网站限制而出现延迟或失败。'
+        ]
+      }
+    ]
+  },
+  antiSpam: {
+    title: '反垃圾邮件政策',
+    subtitle: 'IZYLEADS 只支持合法、透明、可退订的商业触达。',
+    updatedAt: '2026-07-18',
+    sections: [
+      {
+        heading: '基本原则',
+        items: [
+          '发送内容必须真实反映发件人身份、业务目的和联系方式，不得伪装来源或误导收件人。',
+          '主题应与正文内容一致，不得使用夸大、欺骗、诱导点击或与业务无关的标题。',
+          '每封商业邮件都应包含有效退订方式，并尊重收件人的退订、拒绝或停止联系请求。'
+        ]
+      },
+      {
+        heading: '发送规范',
+        items: [
+          '优先联系与用户业务有合理相关性的目标客户，避免无差别群发。',
+          '控制发送频率和批量规模，避免重复轰炸同一联系人、公司或域名。',
+          '不得向已退订、投诉、明确拒绝或明显不相关的联系人继续发送推广内容。'
+        ]
+      },
+      {
+        heading: '平台措施',
+        items: [
+          '系统支持退订链接、发送记录、每日发送限制、跳过已退订邮箱和失败记录追踪。',
+          '管理员可根据投诉、异常发送、滥用行为或法律风险限制账号使用。',
+          '用户应保留必要的业务背景和联系依据，以便处理收件人的疑问或投诉。'
+        ]
+      }
+    ]
+  },
+  guide: {
+    title: '使用说明',
+    subtitle: '从搜索线索到邮件/WhatsApp 触达的基础工作流。',
+    updatedAt: '2026-07-18',
+    sections: [
+      {
+        heading: '搜索商户',
+        items: [
+          '输入目标行业关键词、地区和国家后开始搜索；如果关键词比较宽泛，可以先使用 AI 搜索策略生成更具体的搜索组合。',
+          '国家选择会影响电话区号、语言建议和地区输入体验；地区可以手动输入，也可以使用内置地区选择器。',
+          '官网抓取深度越高，越可能发现联系页、关于页、页脚或隐私页中的邮箱，但耗时也会增加。'
+        ]
+      },
+      {
+        heading: '管理线索库',
+        items: [
+          '线索会按搜索关键词形成标签，便于区分不同搜索批次；“全部”标签保留全部当前账号线索。',
+          '可以删除某个标签、删除标签内独有线索，或清空当前账号全部线索。',
+          '导出 CSV 前建议先筛选目标标签，并确认邮箱来源页面和无邮箱原因。'
+        ]
+      },
+      {
+        heading: '邮件活动',
+        items: [
+          '可以从线索库把邮箱加入收件人，也可以手动输入多个邮箱；多个邮箱用逗号或换行分隔。',
+          '正文编辑器支持基础排版和本地图片插入；AI 邮件草稿需要人工确认后再替换正文。',
+          '真实发送前必须保证发信服务和公网退订地址可用；发送记录会保留用于排查失败原因。'
+        ]
+      },
+      {
+        heading: 'WhatsApp 活动',
+        items: [
+          '可以把线索中的手机号加入 WhatsApp 队列，系统会按国家区号整理号码。',
+          '消息框支持模板变量，例如 {name}、{company}、{phone}、{address}、{website}。',
+          '打开聊天后仍需用户在 WhatsApp 中手动确认发送，系统不会绕过客户端确认。'
+        ]
+      },
+      {
+        heading: '账号与数据',
+        items: [
+          '普通用户只能看到自己账号产生的线索、任务、邮件记录和 WhatsApp 队列。',
+          '管理员可管理成员、额度和全局服务配置；普通用户不应看到或修改管理员密钥。',
+          '如发现数据异常、邮箱识别失败或发送失败，可先查看任务记录和失败原因。'
+        ]
+      }
+    ]
+  }
+};
+
+const legalLinkItems: Array<{ key: LegalDocumentKey; label: string }> = [
+  { key: 'about', label: '关于我们' },
+  { key: 'privacy', label: '隐私政策' },
+  { key: 'terms', label: '服务条款' },
+  { key: 'antiSpam', label: '反垃圾邮件政策' },
+  { key: 'guide', label: '使用说明' }
+];
 
 type SettingsPayload = {
   googleMapsApiKey: string;
@@ -930,6 +1144,7 @@ function App() {
   const [adminToken, setAdminToken] = useState(getSessionAdminToken);
   const [authMessage, setAuthMessage] = useState('');
   const [settingsMessage, setSettingsMessage] = useState('');
+  const [legalView, setLegalView] = useState<LegalDocumentKey | null>(null);
   const [authState, setAuthState] = useState<AuthState>({ membershipEnabled: true, user: null, plans: {}, usage: [] });
   const [authLoaded, setAuthLoaded] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
@@ -2035,15 +2250,19 @@ function App() {
 
   if (authLoaded && !authState.user) {
     return (
-      <AuthGate
-        mode={authMode}
-        setMode={setAuthMode}
-        form={authForm}
-        setForm={setAuthForm}
-        onSubmit={submitAuth}
-        busy={busy === 'membership-auth'}
-        message={authMessage}
-      />
+      <>
+        <AuthGate
+          mode={authMode}
+          setMode={setAuthMode}
+          form={authForm}
+          setForm={setAuthForm}
+          onSubmit={submitAuth}
+          busy={busy === 'membership-auth'}
+          message={authMessage}
+          onOpenLegal={setLegalView}
+        />
+        <LegalCenter activeKey={legalView} onOpen={setLegalView} onClose={() => setLegalView(null)} />
+      </>
     );
   }
 
@@ -2062,13 +2281,13 @@ function App() {
     <main className="app-shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">Leadgen System</p>
+          <p className="eyebrow">IZYLEADS</p>
           <h1>获客工作台</h1>
         </div>
         <div className="topbar-controls">
           <div className="status-row">
             <span className={health?.googleConfigured ? 'pill success' : 'pill warning'}>
-              <MapPin size={16} /> {health?.googleConfigured ? 'Places 已配置' : '缺少 API Key'}
+              <MapPin size={16} /> {health?.googleConfigured ? '数据源已就绪' : '数据源待配置'}
             </span>
             <span className={health?.emailReady ? 'pill success' : 'pill warning'}>
               <Mail size={16} /> {health?.emailReady ? `邮件已就绪：${health.mailerMode}` : `邮件未就绪：${health?.mailerMode || 'dry-run'}`}
@@ -2184,7 +2403,7 @@ function App() {
             </div>
             {searchMode !== 'keyword' && (
               <label className="compact-label">
-                Google Place Type
+                行业类型代码
                 <input
                   value={placeType}
                   onChange={(event) => setPlaceType(event.target.value.trim())}
@@ -3104,6 +3323,11 @@ function App() {
       )}
       </>
       )}
+      <footer className="app-footer">
+        <LegalLinks onOpen={setLegalView} />
+        <span>IZYLEADS · 合法、克制、可退订的商业触达工具</span>
+      </footer>
+      <LegalCenter activeKey={legalView} onOpen={setLegalView} onClose={() => setLegalView(null)} />
     </main>
     </div>
   );
@@ -3173,6 +3397,113 @@ function ConsoleSidebar({ googleConfigured, mailerMode }: { googleConfigured: bo
 }
 
 */
+function LegalLinks({ onOpen }: { onOpen: (key: LegalDocumentKey) => void }) {
+  return (
+    <nav className="legal-links" aria-label="合规与帮助">
+      {legalLinkItems.map((item) => (
+        <button type="button" key={item.key} className="legal-link-button" onClick={() => onOpen(item.key)}>
+          {item.label}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+function LegalCenter({
+  activeKey,
+  onOpen,
+  onClose
+}: {
+  activeKey: LegalDocumentKey | null;
+  onOpen: (key: LegalDocumentKey) => void;
+  onClose: () => void;
+}) {
+  if (!activeKey) return null;
+  const document = legalDocuments[activeKey];
+
+  return (
+    <div className="dialog-backdrop legal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className="legal-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="legal-dialog-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="legal-dialog-header">
+          <div>
+            <p className="eyebrow">IZYLEADS</p>
+            <h2 id="legal-dialog-title">{document.title}</h2>
+            <p>{document.subtitle}</p>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="关闭" title="关闭">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="legal-tabs" role="tablist" aria-label="合规文档">
+          {legalLinkItems.map((item) => (
+            <button
+              type="button"
+              key={item.key}
+              className={activeKey === item.key ? 'active' : ''}
+              onClick={() => onOpen(item.key)}
+              role="tab"
+              aria-selected={activeKey === item.key}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+        <div className="legal-body">
+          <div className="legal-updated">最后更新：{document.updatedAt}</div>
+          {document.sections.map((section) => (
+            <section className="legal-section" key={section.heading}>
+              <h3>{section.heading}</h3>
+              <ul>
+                {section.items.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function LegalSettingsPanel() {
+  return (
+    <div className="settings-detail-grid legal-settings-grid">
+      {legalLinkItems.map((item) => {
+        const document = legalDocuments[item.key];
+        return (
+          <section className="settings-section legal-settings-card" key={item.key}>
+            <div className="legal-settings-card-header">
+              <div>
+                <p className="eyebrow">IZYLEADS</p>
+                <h3>{document.title}</h3>
+                <span>最后更新：{document.updatedAt}</span>
+              </div>
+            </div>
+            <p>{document.subtitle}</p>
+            {document.sections.map((section) => (
+              <div className="legal-settings-section" key={section.heading}>
+                <strong>{section.heading}</strong>
+                <ul>
+                  {section.items.map((text) => (
+                    <li key={text}>{text}</li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
 function AuthGate({
   mode,
   setMode,
@@ -3180,7 +3511,8 @@ function AuthGate({
   setForm,
   onSubmit,
   busy,
-  message
+  message,
+  onOpenLegal
 }: {
   mode: 'login' | 'register';
   setMode: React.Dispatch<React.SetStateAction<'login' | 'register'>>;
@@ -3189,11 +3521,12 @@ function AuthGate({
   onSubmit: () => void;
   busy: boolean;
   message: string;
+  onOpenLegal: (key: LegalDocumentKey) => void;
 }) {
   return (
     <main className="auth-gate">
       <section className="auth-card">
-        <p className="eyebrow">Leadgen System</p>
+        <p className="eyebrow">IZYLEADS</p>
         <h1>{mode === 'register' ? '创建会员账号' : '登录会员账号'}</h1>
         <div className="segmented-control">
           <button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>登录</button>
@@ -3217,6 +3550,9 @@ function AuthGate({
           {busy ? '处理中' : mode === 'register' ? '注册并登录' : '登录'}
         </button>
         {message && <div className="settings-message">{message}</div>}
+        <div className="auth-legal">
+          <LegalLinks onOpen={onOpenLegal} />
+        </div>
       </section>
     </main>
   );
@@ -3384,7 +3720,7 @@ function SettingsSidebar({
       >
         <MapPin size={17} />
         <span>
-          <strong>Google Maps API Key</strong>
+          <strong>商户数据服务 API Key</strong>
           <small>{settings.googleMapsApiKey ? '已保存' : '未设置'}</small>
         </span>
       </button>
@@ -3396,7 +3732,7 @@ function SettingsSidebar({
       >
         <Languages size={17} />
         <span>
-          <strong>Google Translate API Key</strong>
+          <strong>翻译服务 API Key</strong>
           <small>{settings.googleTranslateApiKey ? '已保存' : '未设置'}</small>
         </span>
       </button>
@@ -3476,6 +3812,18 @@ function SettingsSidebar({
         </span>
       </button>
 
+      <button
+        type="button"
+        className={activeSettingsView === 'legal' ? 'settings-tag active' : 'settings-tag'}
+        onClick={() => setActiveSettingsView('legal')}
+      >
+        <ShieldCheck size={17} />
+        <span>
+          <strong>合规与帮助中心</strong>
+          <small>条款、隐私和使用说明</small>
+        </span>
+      </button>
+
       <button type="button" className="settings-back-link" onClick={() => setActiveSettingsView('workspace')}>
         返回工作台
       </button>
@@ -3490,14 +3838,14 @@ function SettingsSidebar({
       </div>
 
       <section className="settings-section">
-        <h3>Google Maps</h3>
+        <h3>商户数据服务</h3>
         <label>
           API Key
           <input
             type="password"
             value={settings.googleMapsApiKey}
             onChange={(event) => updateSettings({ googleMapsApiKey: event.target.value })}
-            placeholder="AIza..."
+            placeholder="输入服务密钥"
           />
         </label>
         <div className="settings-two-col">
@@ -3826,9 +4174,9 @@ function SettingsDetailView({
       <div className="settings-detail-header">
         <div>
           <p className="eyebrow">Settings</p>
-          <h2>{view === 'google' ? 'Google Maps API Key' : view === 'translate' ? 'Google Translate API Key' : view === 'ai' ? 'AI关键词分析' : view === 'members' ? '会员与权限' : view === 'tasks' ? '执行任务' : view === 'delivery' ? '最近发送记录' : '邮箱自动化设置'}</h2>
+          <h2>{view === 'google' ? '商户数据服务 API Key' : view === 'translate' ? '翻译服务 API Key' : view === 'ai' ? 'AI关键词分析' : view === 'members' ? '会员与权限' : view === 'tasks' ? '执行任务' : view === 'delivery' ? '最近发送记录' : view === 'legal' ? '合规与帮助中心' : '邮箱自动化设置'}</h2>
         </div>
-        {!['members', 'tasks', 'delivery'].includes(view) && (
+        {!['members', 'tasks', 'delivery', 'legal'].includes(view) && (
           <button className="primary-small" onClick={onSave} disabled={saving}>
             <Check size={18} /> {saving ? '保存中' : '保存并返回'}
           </button>
@@ -3865,17 +4213,19 @@ function SettingsDetailView({
           busy={busy}
           onClearSendLogs={onClearSendLogs}
         />
+      ) : view === 'legal' ? (
+        <LegalSettingsPanel />
       ) : view === 'google' ? (
         <div className="settings-detail-grid compact">
           <section className="settings-section">
-            <h3>Google Maps</h3>
+            <h3>商户数据服务</h3>
             <label>
               API Key
               <input
                 type="password"
                 value={settings.googleMapsApiKey}
                 onChange={(event) => updateSettings({ googleMapsApiKey: event.target.value })}
-                placeholder="AIza..."
+                placeholder="输入服务密钥"
               />
             </label>
             <div className="settings-two-col">
@@ -3919,14 +4269,14 @@ function SettingsDetailView({
       ) : view === 'translate' ? (
         <div className="settings-detail-grid compact">
           <section className="settings-section">
-            <h3>Google Translate</h3>
+            <h3>翻译服务</h3>
             <label>
               API Key
               <input
                 type="password"
                 value={settings.googleTranslateApiKey}
                 onChange={(event) => updateSettings({ googleTranslateApiKey: event.target.value })}
-                placeholder="AIza..."
+                placeholder="输入服务密钥"
               />
             </label>
           </section>
