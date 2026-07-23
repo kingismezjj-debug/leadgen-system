@@ -179,6 +179,7 @@ export function buildSearchRequests({ keyword, area, maxResults = 20, pageToken 
     return [{
       body: buildSearchBody({ keyword, area, maxResults: maxResultCount, pageToken, languageCode, regionCode }),
       strategy: 'keyword',
+      searchKeyword: keyword,
       nextPageEligible: true
     }];
   }
@@ -188,6 +189,7 @@ export function buildSearchRequests({ keyword, area, maxResults = 20, pageToken 
     return [{
       body: buildSearchBody({ keyword, area, maxResults: maxResultCount, languageCode, regionCode, includedType }),
       strategy: includedType ? `type:${includedType}` : 'keyword',
+      searchKeyword: keyword,
       nextPageEligible: true
     }];
   }
@@ -197,6 +199,7 @@ export function buildSearchRequests({ keyword, area, maxResults = 20, pageToken 
     requests.push({
       body: buildSearchBody({ keyword, area, maxResults: maxResultCount, languageCode, regionCode, includedType }),
       strategy: `type:${includedType}`,
+      searchKeyword: keyword,
       nextPageEligible: false
     });
   }
@@ -206,6 +209,7 @@ export function buildSearchRequests({ keyword, area, maxResults = 20, pageToken 
     requests.push({
       body: buildSearchBody({ keyword: query, area, maxResults: maxResultCount, languageCode, regionCode }),
       strategy: query === keyword ? 'keyword' : `expanded:${query}`,
+      searchKeyword: query,
       nextPageEligible: false
     });
   }
@@ -213,6 +217,7 @@ export function buildSearchRequests({ keyword, area, maxResults = 20, pageToken 
   return requests.length ? requests : [{
     body: buildSearchBody({ keyword, area, maxResults: maxResultCount, languageCode, regionCode }),
     strategy: 'keyword',
+    searchKeyword: keyword,
     nextPageEligible: true
   }];
 }
@@ -245,12 +250,30 @@ function dedupePlaces(places) {
     return keys;
   };
 
+  const mergeItemMetadata = (existing = {}, incoming = {}) => ({
+    sourceKeywords: Array.from(new Set([
+      ...(existing.sourceKeywords || []),
+      existing.sourceKeyword,
+      ...(incoming.sourceKeywords || []),
+      incoming.sourceKeyword
+    ].map(normalizeText).filter(Boolean))),
+    matchStrategies: Array.from(new Set([
+      ...(existing.matchStrategies || []),
+      existing.strategy,
+      ...(incoming.matchStrategies || []),
+      incoming.strategy
+    ].map(normalizeText).filter(Boolean)))
+  });
+
   for (const item of places) {
     const keys = keysForPlace(item.place);
     const existingKey = keys.map((key) => aliases.get(key)).find(Boolean);
     if (existingKey) {
       const existing = byKey.get(existingKey);
-      if (placeQuality(item) > placeQuality(existing)) byKey.set(existingKey, item);
+      const merged = mergeItemMetadata(existing, item);
+      byKey.set(existingKey, placeQuality(item) > placeQuality(existing)
+        ? { ...item, sourceKeywords: merged.sourceKeywords, matchStrategies: merged.matchStrategies }
+        : { ...existing, sourceKeywords: merged.sourceKeywords, matchStrategies: merged.matchStrategies });
       for (const key of keys) aliases.set(key, existingKey);
       continue;
     }
@@ -325,7 +348,13 @@ export async function searchPlaces({
     pageTokenForRequest = request.nextPageEligible ? data.nextPageToken || '' : '';
     if (request.nextPageEligible) nextPageToken = pageTokenForRequest;
     for (const place of data.places || []) {
-      collected.push({ place, strategy: request.strategy });
+      collected.push({
+        place,
+        strategy: request.strategy,
+        sourceKeyword: request.searchKeyword || keyword,
+        sourceKeywords: [request.searchKeyword || keyword],
+        matchStrategies: [request.strategy]
+      });
     }
     } while (request.nextPageEligible && pageTokenForRequest && dedupePlaces(collected).length < requestedResultCount);
 
@@ -334,7 +363,13 @@ export async function searchPlaces({
 
   const merged = dedupePlaces(collected).slice(0, requestedResultCount);
   return {
-    leads: merged.map(({ place, strategy }) => ({ ...normalizePlace(place, effectiveRegionCode), matchStrategy: strategy })),
+    leads: merged.map(({ place, strategy, sourceKeyword, sourceKeywords = [], matchStrategies = [] }) => ({
+      ...normalizePlace(place, effectiveRegionCode),
+      sourceKeyword: sourceKeyword || sourceKeywords[0] || keyword,
+      sourceKeywords: Array.from(new Set([...(sourceKeywords || []), sourceKeyword || keyword].map(normalizeText).filter(Boolean))),
+      matchStrategy: strategy,
+      matchStrategies: Array.from(new Set([...(matchStrategies || []), strategy].map(normalizeText).filter(Boolean)))
+    })),
     nextPageToken,
     strategies: requests.map((request) => request.strategy)
   };

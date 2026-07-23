@@ -77,7 +77,9 @@ test('smart search builds type and expanded keyword requests', () => {
   });
 
   assert.equal(requests[0].body.includedType, 'dentist');
+  assert.equal(requests[0].searchKeyword, 'dentist');
   assert.ok(requests.some((request) => request.strategy.startsWith('expanded:')));
+  assert.ok(requests.some((request) => request.searchKeyword === 'orthodontist'));
   assert.equal(requests.some((request) => request.nextPageEligible), false);
 });
 
@@ -214,4 +216,46 @@ test('searchPlaces deduplicates results by shared website and phone', async (t) 
 
   assert.equal(result.leads.length, 2);
   assert.deepEqual(result.leads.map((lead) => lead.website).sort(), ['https://beta.test', 'https://www.alpha.test/']);
+  assert.deepEqual(result.leads.map((lead) => lead.sourceKeyword), ['phone repair', 'phone repair']);
+});
+
+test('searchPlaces records the actual source keyword for smart expanded results', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'leadgen-places-source-keyword-'));
+  const settingsPath = join(directory, 'settings.json');
+  const previousSettingsPath = process.env.LEADGEN_SETTINGS_PATH;
+  const previousFetch = global.fetch;
+  process.env.LEADGEN_SETTINGS_PATH = settingsPath;
+  await writeFile(settingsPath, JSON.stringify({ googleMapsApiKey: 'test-key' }, null, 2));
+
+  global.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    const keyword = body.textQuery.replace(/ in Toronto$/, '');
+    return new Response(JSON.stringify({
+      places: [{
+        id: `place-${keyword.replace(/\W+/g, '-')}`,
+        displayName: { text: `${keyword} Lead` },
+        formattedAddress: `${keyword} Street`
+      }]
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  };
+
+  t.after(async () => {
+    global.fetch = previousFetch;
+    if (previousSettingsPath === undefined) delete process.env.LEADGEN_SETTINGS_PATH;
+    else process.env.LEADGEN_SETTINGS_PATH = previousSettingsPath;
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  const result = await searchPlaces({
+    keyword: 'dentist',
+    area: 'Toronto',
+    maxResults: 4,
+    searchMode: 'smart'
+  });
+
+  assert.ok(result.leads.some((lead) => lead.sourceKeyword === 'orthodontist'));
+  assert.ok(result.leads.every((lead) => lead.sourceKeywords.includes(lead.sourceKeyword)));
 });

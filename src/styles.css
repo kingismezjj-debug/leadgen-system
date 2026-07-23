@@ -3025,6 +3025,37 @@ td a {
   color: var(--ui-blue);
 }
 
+.lead-source-keywords {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 7px;
+  max-width: 320px;
+}
+
+.lead-source-keywords span,
+.lead-source-keywords em {
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.45;
+}
+
+.lead-source-keywords span {
+  background: #eef1ef;
+  color: var(--ui-muted);
+  font-weight: 800;
+}
+
+.lead-source-keywords em {
+  background: #eef6fb;
+  color: #1d5f7b;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
 td span {
   align-items: flex-start;
 }

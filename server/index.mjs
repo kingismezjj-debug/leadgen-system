@@ -250,7 +250,11 @@ async function executeSearchTask(searchInput, user = null) {
     const settings = await getRuntimeSettings();
     await updateTaskRecord(task.id, { progress: 20, detail: '正在调用 Google Places' });
     const result = await searchPlaces(input);
-    let leads = result.leads;
+    let leads = result.leads.map((lead) => ({
+      ...lead,
+      sourceKeyword: lead.sourceKeyword || input.keyword,
+      sourceKeywords: Array.from(new Set([...(lead.sourceKeywords || []), lead.sourceKeyword || input.keyword].filter(Boolean)))
+    }));
     if (input.includeEmailDiscovery) {
       await consumeUsage(user, 'discover_email', Math.max(leads.length, 1), { keyword: input.keyword, area: input.area });
     }

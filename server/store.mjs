@@ -180,6 +180,15 @@ function mergeWhatsAppContacts(existingContacts = [], incomingContacts = []) {
   return Array.from(byKey.values());
 }
 
+function mergeTextList(...lists) {
+  return Array.from(new Set(
+    lists
+      .flat()
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+  ));
+}
+
 export async function upsertLeads(incomingLeads, source, user = null) {
   return mutateStore((store) => {
     const ownerId = normalizeOwnerId(user);
@@ -197,6 +206,18 @@ export async function upsertLeads(incomingLeads, source, user = null) {
         const emailQuality = mergeEmailQuality(existing.emailQuality, incoming.emailQuality, emails);
         const emailSources = mergeEmailSources(existing.emailSources, incoming.emailSources);
         const whatsappContacts = mergeWhatsAppContacts(existing.whatsappContacts, incoming.whatsappContacts);
+        const sourceKeywords = mergeTextList(
+          existing.sourceKeywords,
+          existing.sourceKeyword,
+          incoming.sourceKeywords,
+          incoming.sourceKeyword
+        );
+        const matchStrategies = mergeTextList(
+          existing.matchStrategies,
+          existing.matchStrategy,
+          incoming.matchStrategies,
+          incoming.matchStrategy
+        );
         const searchSources = Array.from(new Set([
           ...(existing.searchSources || []),
           ...(existing.source ? [existing.source] : []),
@@ -211,6 +232,9 @@ export async function upsertLeads(incomingLeads, source, user = null) {
           emailSources,
           whatsappContacts,
           whatsappVerified: Boolean(existing.whatsappVerified || incoming.whatsappVerified || whatsappContacts.length),
+          sourceKeywords,
+          sourceKeyword: incoming.sourceKeyword || existing.sourceKeyword || sourceKeywords[0] || '',
+          matchStrategies,
           tags: Array.from(new Set([...(existing.tags || []), ...(incoming.tags || [])])),
           searchSources,
           updatedAt: now

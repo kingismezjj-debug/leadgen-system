@@ -68,8 +68,8 @@ test('upsertLeads preserves every search source for duplicate leads', async (t) 
     await rm(directory, { recursive: true, force: true });
   });
 
-  await upsertLeads([lead], 'google-places:dentist:New York');
-  await upsertLeads([lead], 'google-places:clinic:New York');
+  await upsertLeads([{ ...lead, sourceKeyword: 'dentist', sourceKeywords: ['dentist'], matchStrategy: 'keyword' }], 'google-places:dentist:New York');
+  await upsertLeads([{ ...lead, sourceKeyword: 'clinic', sourceKeywords: ['clinic'], matchStrategy: 'expanded:clinic' }], 'google-places:clinic:New York');
 
   const store = await readStore();
   assert.equal(store.leads.length, 1);
@@ -77,6 +77,8 @@ test('upsertLeads preserves every search source for duplicate leads', async (t) 
     'google-places:dentist:New York',
     'google-places:clinic:New York'
   ]);
+  assert.deepEqual(store.leads[0].sourceKeywords, ['dentist', 'clinic']);
+  assert.deepEqual(store.leads[0].matchStrategies, ['keyword', 'expanded:clinic']);
 });
 
 test('upsertLeads keeps separate copies of the same lead for different owners', async (t) => {

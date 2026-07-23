@@ -76,6 +76,10 @@ type Lead = {
   status: string;
   source: string;
   searchSources?: string[];
+  sourceKeyword?: string;
+  sourceKeywords?: string[];
+  matchStrategy?: string;
+  matchStrategies?: string[];
   createdAt?: string;
   updatedAt?: string;
 };
@@ -594,6 +598,9 @@ function leadsToClientCsv(leads: Lead[]) {
     'name',
     'companyType',
     'phone',
+    'sourceKeywords',
+    'sourceKeyword',
+    'matchStrategies',
     'whatsappContactUrls',
     'whatsappContactPhones',
     'emails',
@@ -616,6 +623,9 @@ function leadsToClientCsv(leads: Lead[]) {
     lead.name,
     lead.companyType,
     lead.phone,
+    getLeadSourceKeywords(lead).join('; '),
+    lead.sourceKeyword || getLeadSourceKeywords(lead)[0] || '',
+    (lead.matchStrategies || (lead.matchStrategy ? [lead.matchStrategy] : [])).join('; '),
     (lead.whatsappContacts || []).map((item) => item.url).filter(Boolean).join('; '),
     (lead.whatsappContacts || []).map((item) => item.phone).filter(Boolean).join('; '),
     (lead.emails || []).join('; '),
@@ -642,6 +652,18 @@ function getLeadSearchSources(lead: Lead) {
     ...(lead.searchSources || []),
     ...(lead.source ? [lead.source] : [])
   ]);
+}
+
+function getLeadSourceKeywords(lead: Lead) {
+  const values = [
+    ...(lead.sourceKeywords || []),
+    lead.sourceKeyword,
+    ...Array.from(getLeadSearchSources(lead)).map((source) => {
+      const match = String(source || '').match(/^google-places:(.*):[^:]*$/);
+      return match?.[1] || '';
+    })
+  ];
+  return Array.from(new Set(values.map((item) => String(item || '').trim()).filter(Boolean)));
 }
 
 function getEmailSourceForLead(lead: Lead, email: string) {
@@ -3177,11 +3199,21 @@ function App() {
             <tbody>
               {filteredLeads.map((lead) => {
                 const whatsappContact = getLeadWhatsAppContact(lead);
+                const sourceKeywords = getLeadSourceKeywords(lead);
                 return (
                 <tr key={lead.id}>
                   <td data-label="商户">
                     <strong>{lead.name}</strong>
                     {lead.website && <a href={lead.website} target="_blank" rel="noreferrer">{lead.website.replace(/^https?:\/\//, '')}</a>}
+                    {!!sourceKeywords.length && (
+                      <div className="lead-source-keywords" title={sourceKeywords.join('、')}>
+                        <span>来源关键词</span>
+                        {sourceKeywords.slice(0, 3).map((item) => (
+                          <em key={item}>{item}</em>
+                        ))}
+                        {sourceKeywords.length > 3 && <em>+{sourceKeywords.length - 3}</em>}
+                      </div>
+                    )}
                   </td>
                   <td data-label="类型">{lead.companyType || '-'}</td>
                   <td data-label="联系">

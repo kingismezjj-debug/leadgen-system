@@ -8,6 +8,9 @@ test('leadsToCsv quotes fields and joins email arrays', () => {
       name: 'Acme, Inc.',
       companyType: 'Dentist',
       phone: '555',
+      sourceKeywords: ['dentist', 'clinic'],
+      sourceKeyword: 'dentist',
+      matchStrategies: ['keyword', 'expanded:clinic'],
       emails: ['a@example.com', 'b@example.com'],
       emailSources: [{ email: 'a@example.com', url: 'https://example.com/contact' }],
       website: 'https://example.com',
@@ -21,6 +24,8 @@ test('leadsToCsv quotes fields and joins email arrays', () => {
   ]);
 
   assert.match(csv, /"Acme, Inc\."/);
+  assert.match(csv, /"dentist; clinic"/);
+  assert.match(csv, /"keyword; expanded:clinic"/);
   assert.match(csv, /"a@example.com; b@example.com"/);
   assert.match(csv, /"https:\/\/example\.com\/contact"/);
   assert.equal(csv.charCodeAt(0), 0xfeff);
