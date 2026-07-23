@@ -189,6 +189,21 @@ function mergeTextList(...lists) {
   ));
 }
 
+function mergeKeywordTranslations(existing = {}, incoming = {}, sourceKeywords = []) {
+  const byKeyword = new Map();
+  const addMappings = (lead = {}) => {
+    const keywords = [...(lead.sourceKeywords || []), lead.sourceKeyword].map((item) => String(item || '').trim()).filter(Boolean);
+    const translations = [...(lead.sourceKeywordsZh || []), lead.sourceKeywordZh].map((item) => String(item || '').trim());
+    keywords.forEach((keyword, index) => {
+      const translated = translations[index];
+      if (translated) byKeyword.set(keyword.toLowerCase(), translated);
+    });
+  };
+  addMappings(existing);
+  addMappings(incoming);
+  return sourceKeywords.map((keyword) => byKeyword.get(String(keyword || '').trim().toLowerCase()) || '');
+}
+
 export async function upsertLeads(incomingLeads, source, user = null) {
   return mutateStore((store) => {
     const ownerId = normalizeOwnerId(user);
@@ -212,6 +227,7 @@ export async function upsertLeads(incomingLeads, source, user = null) {
           incoming.sourceKeywords,
           incoming.sourceKeyword
         );
+        const sourceKeywordsZh = mergeKeywordTranslations(existing, incoming, sourceKeywords);
         const matchStrategies = mergeTextList(
           existing.matchStrategies,
           existing.matchStrategy,
@@ -234,6 +250,8 @@ export async function upsertLeads(incomingLeads, source, user = null) {
           whatsappVerified: Boolean(existing.whatsappVerified || incoming.whatsappVerified || whatsappContacts.length),
           sourceKeywords,
           sourceKeyword: incoming.sourceKeyword || existing.sourceKeyword || sourceKeywords[0] || '',
+          sourceKeywordsZh,
+          sourceKeywordZh: incoming.sourceKeywordZh || existing.sourceKeywordZh || sourceKeywordsZh[0] || '',
           matchStrategies,
           tags: Array.from(new Set([...(existing.tags || []), ...(incoming.tags || [])])),
           searchSources,

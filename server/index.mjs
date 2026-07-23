@@ -15,7 +15,7 @@ import { enrichLeadsWithEmails } from './leadEmailEnrichment.mjs';
 import { buildUnsubscribeUrl, sendCampaign, previewCampaign, verifySmtpSettings } from './mailer.mjs';
 import { searchPlaces } from './places.mjs';
 import { generateWhatsAppDrafts } from './whatsappGeneration.mjs';
-import { translateEmailCampaign } from './translate.mjs';
+import { translateEmailCampaign, translateWithGoogle } from './translate.mjs';
 import { enrichLeadWaterfall } from './waterfallEnrichment.mjs';
 import {
   consumeUsage,
@@ -261,7 +261,7 @@ async function executeSearchTask(searchInput, user = null, existingTask = null) 
     });
     await consumeUsage(user, 'search_places', input.maxResults, { keyword: input.keyword, area: input.area });
     const settings = await getRuntimeSettings();
-    await updateTaskRecord(task.id, { progress: 20, detail: '正在调用 Google Places' });
+    await updateTaskRecord(task.id, { progress: 20, detail: '正在查询商户数据' });
     const result = await searchPlaces(input);
     let leads = result.leads.map((lead) => ({
       ...lead,
@@ -292,6 +292,8 @@ async function executeSearchTask(searchInput, user = null, existingTask = null) 
       });
     }
 
+    await updateTaskRecord(task.id, { progress: input.includeEmailDiscovery ? 78 : 70, detail: '正在翻译展示标签' });
+    leads = await translateLeadDisplayLabels(leads, settings);
     await updateTaskRecord(task.id, { progress: 80, detail: '正在写入线索库' });
     const upsert = await upsertLeads(leads, source, user);
     const search = await addSearchRecord({
@@ -361,6 +363,48 @@ async function queueSearchTask(searchInput, user = null) {
   }, user);
   enqueueSearchTask(() => executeSearchTask(input, user, task));
   return task;
+}
+
+async function translateLeadDisplayLabels(leads, settings) {
+  const apiKey = settings.googleTranslateApiKey;
+  if (!apiKey) return leads;
+
+  const uniqueLabels = [];
+  const seen = new Set();
+  for (const lead of leads || []) {
+    for (const label of [lead?.companyType, lead?.sourceKeyword, ...(lead?.sourceKeywords || [])]) {
+      const text = String(label || '').trim();
+      if (!text) continue;
+      const key = text.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      uniqueLabels.push(text);
+    }
+  }
+
+  if (!uniqueLabels.length) return leads;
+
+  let translations = [];
+  try {
+    translations = await translateWithGoogle({
+      values: uniqueLabels,
+      targetLanguage: 'zh-CN',
+      apiKey
+    });
+  } catch {
+    return leads;
+  }
+
+  const translatedByLabel = new Map(uniqueLabels.map((label, index) => [label.toLowerCase(), String(translations[index] || '').trim()]));
+  return leads.map((lead) => {
+    const sourceKeywords = Array.from(new Set([...(lead.sourceKeywords || []), lead.sourceKeyword].map((item) => String(item || '').trim()).filter(Boolean)));
+    return {
+      ...lead,
+      companyTypeZh: translatedByLabel.get(String(lead.companyType || '').trim().toLowerCase()) || lead.companyTypeZh || '',
+      sourceKeywordZh: translatedByLabel.get(String(lead.sourceKeyword || sourceKeywords[0] || '').trim().toLowerCase()) || lead.sourceKeywordZh || '',
+      sourceKeywordsZh: sourceKeywords.map((item) => translatedByLabel.get(item.toLowerCase()) || '').filter(Boolean)
+    };
+  });
 }
 
 app.get('/api/health', asyncHandler(async (_req, res) => {

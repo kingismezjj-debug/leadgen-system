@@ -3056,6 +3056,14 @@ td a {
   overflow-wrap: anywhere;
 }
 
+.lead-type-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 td span {
   align-items: flex-start;
 }

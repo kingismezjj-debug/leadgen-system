@@ -40,6 +40,7 @@ type Lead = {
   id: string;
   name: string;
   companyType: string;
+  companyTypeZh?: string;
   phone: string;
   whatsappContacts?: Array<{ url: string; phone?: string; source?: string; foundAt?: string; pageUrl?: string; label?: string }>;
   whatsappVerified?: boolean;
@@ -78,6 +79,8 @@ type Lead = {
   searchSources?: string[];
   sourceKeyword?: string;
   sourceKeywords?: string[];
+  sourceKeywordZh?: string;
+  sourceKeywordsZh?: string[];
   matchStrategy?: string;
   matchStrategies?: string[];
   createdAt?: string;
@@ -673,6 +676,18 @@ function getLeadSourceKeywords(lead: Lead) {
   return Array.from(new Set(values.map((item) => String(item || '').trim()).filter(Boolean)));
 }
 
+function getLeadSourceKeywordTranslations(lead: Lead) {
+  return getLeadSourceKeywords(lead).map((item, index) => lead.sourceKeywordsZh?.[index] || (item === lead.sourceKeyword ? lead.sourceKeywordZh : '') || '');
+}
+
+function formatLabelWithTranslation(label: string, translated?: string) {
+  const original = String(label || '').trim();
+  const zh = String(translated || '').trim();
+  if (!original) return zh;
+  if (!zh || zh === original) return original;
+  return `${original}（${zh}）`;
+}
+
 function getEmailSourceForLead(lead: Lead, email: string) {
   return (lead.emailSources || []).find((item) => item.email.toLowerCase() === email.toLowerCase()) || null;
 }
@@ -1142,10 +1157,10 @@ function translateKeyword(keyword: string, language: string) {
 }
 
 const defaultSubject = '关于 {{name}} 的本地获客合作想法';
-const defaultBody = `你好，{{name}} 团队，\n\n我在 Google 地图上看到你们的商户信息，想确认是否方便聊一个提升本地区客户转化的小合作。\n\n如果合适，我可以发一份很短的方案。`;
+const defaultBody = `你好，{{name}} 团队，\n\n我看到你们的公开商户信息，想确认是否方便聊一个提升本地区客户转化的小合作。\n\n如果合适，我可以发一份很短的方案。`;
 const defaultBodyHtml = [
   '<p>你好，{{name}} 团队，</p>',
-  '<p>我在 Google 地图上看到你们的商户信息，想确认是否方便聊一个提升本地区客户转化的小合作。</p>',
+  '<p>我看到你们的公开商户信息，想确认是否方便聊一个提升本地区客户转化的小合作。</p>',
   '<p>如果合适，我可以发一份很短的方案。</p>'
 ].join('');
 
@@ -3235,6 +3250,8 @@ function App() {
               {filteredLeads.map((lead) => {
                 const whatsappContact = getLeadWhatsAppContact(lead);
                 const sourceKeywords = getLeadSourceKeywords(lead);
+                const sourceKeywordTranslations = getLeadSourceKeywordTranslations(lead);
+                const companyTypeLabel = formatLabelWithTranslation(lead.companyType, lead.companyTypeZh);
                 return (
                 <tr key={lead.id}>
                   <td data-label="商户">
@@ -3243,14 +3260,16 @@ function App() {
                     {!!sourceKeywords.length && (
                       <div className="lead-source-keywords" title={sourceKeywords.join('、')}>
                         <span>来源关键词</span>
-                        {sourceKeywords.slice(0, 3).map((item) => (
-                          <em key={item}>{item}</em>
+                        {sourceKeywords.slice(0, 3).map((item, index) => (
+                          <em key={item}>{formatLabelWithTranslation(item, sourceKeywordTranslations[index])}</em>
                         ))}
                         {sourceKeywords.length > 3 && <em>+{sourceKeywords.length - 3}</em>}
                       </div>
                     )}
                   </td>
-                  <td data-label="类型">{lead.companyType || '-'}</td>
+                  <td data-label="类型">
+                    <span className="lead-type-label">{companyTypeLabel || '-'}</span>
+                  </td>
                   <td data-label="联系">
                     <span><Phone size={14} /> {lead.phone || '-'}</span>
                     {whatsappContact && (

@@ -297,7 +297,7 @@ export async function searchPlaces({
 }) {
   const settings = await getRuntimeSettings();
   if (!settings.googleMapsApiKey) {
-    throw Object.assign(new Error('缺少 GOOGLE_MAPS_API_KEY，请先在系统设置里配置 Google Places API key。'), { status: 400 });
+    throw Object.assign(new Error('缺少商户数据服务 API Key，请先在系统设置里配置。'), { status: 400 });
   }
 
   const effectiveRegionCode = regionCode || settings.placesRegionCode;
@@ -341,7 +341,7 @@ export async function searchPlaces({
 
     if (!response.ok) {
       const text = await response.text();
-      throw Object.assign(new Error(`Google Places 查询失败：${response.status} ${text}`), { status: response.status });
+      throw Object.assign(new Error(`商户数据查询失败：${response.status} ${text}`), { status: response.status });
     }
 
     const data = await response.json();

@@ -68,8 +68,8 @@ test('upsertLeads preserves every search source for duplicate leads', async (t) 
     await rm(directory, { recursive: true, force: true });
   });
 
-  await upsertLeads([{ ...lead, sourceKeyword: 'dentist', sourceKeywords: ['dentist'], matchStrategy: 'keyword' }], 'google-places:dentist:New York');
-  await upsertLeads([{ ...lead, sourceKeyword: 'clinic', sourceKeywords: ['clinic'], matchStrategy: 'expanded:clinic' }], 'google-places:clinic:New York');
+  await upsertLeads([{ ...lead, sourceKeyword: 'dentist', sourceKeywords: ['dentist'], sourceKeywordZh: '牙医', sourceKeywordsZh: ['牙医'], matchStrategy: 'keyword' }], 'google-places:dentist:New York');
+  await upsertLeads([{ ...lead, sourceKeyword: 'clinic', sourceKeywords: ['clinic'], sourceKeywordZh: '诊所', sourceKeywordsZh: ['诊所'], matchStrategy: 'expanded:clinic' }], 'google-places:clinic:New York');
 
   const store = await readStore();
   assert.equal(store.leads.length, 1);
@@ -78,6 +78,7 @@ test('upsertLeads preserves every search source for duplicate leads', async (t) 
     'google-places:clinic:New York'
   ]);
   assert.deepEqual(store.leads[0].sourceKeywords, ['dentist', 'clinic']);
+  assert.deepEqual(store.leads[0].sourceKeywordsZh, ['牙医', '诊所']);
   assert.deepEqual(store.leads[0].matchStrategies, ['keyword', 'expanded:clinic']);
 });
 

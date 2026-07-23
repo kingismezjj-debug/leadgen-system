@@ -124,7 +124,7 @@ test('search API queues long-running searches and exposes task progress', async 
   process.env.LEADGEN_STORE_PATH = storePath;
   process.env.LEADGEN_SETTINGS_PATH = settingsPath;
   await writeFile(storePath, JSON.stringify({ leads: [], searches: [], tasks: [] }, null, 2));
-  await writeFile(settingsPath, JSON.stringify({ googleMapsApiKey: 'test-key' }, null, 2));
+  await writeFile(settingsPath, JSON.stringify({ googleMapsApiKey: 'test-key', googleTranslateApiKey: 'translate-key' }, null, 2));
 
   global.fetch = async (url, init) => {
     if (String(url).startsWith('https://places.googleapis.com/')) {
@@ -132,10 +132,26 @@ test('search API queues long-running searches and exposes task progress', async 
         places: [{
           id: 'place-queued-1',
           displayName: { text: 'Queued Lead' },
+          primaryTypeDisplayName: { text: 'Магазин' },
           formattedAddress: '1 Queue St',
           websiteUri: 'https://queued.example',
           nationalPhoneNumber: '555 0100'
         }]
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    if (String(url).startsWith('https://translation.googleapis.com/')) {
+      const body = JSON.parse(init.body);
+      const dictionary = new Map([
+        ['Магазин', '商店'],
+        ['dentist', '牙医']
+      ]);
+      return new Response(JSON.stringify({
+        data: {
+          translations: body.q.map((value) => ({ translatedText: dictionary.get(value) || value }))
+        }
       }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
@@ -205,4 +221,6 @@ test('search API queues long-running searches and exposes task progress', async 
   const storePayload = await leadsResponse.json();
   assert.equal(storePayload.leads.length, 1);
   assert.equal(storePayload.leads[0].name, 'Queued Lead');
+  assert.equal(storePayload.leads[0].companyTypeZh, '商店');
+  assert.deepEqual(storePayload.leads[0].sourceKeywordsZh, ['牙医']);
 });
