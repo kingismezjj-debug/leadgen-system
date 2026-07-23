@@ -171,6 +171,15 @@ function mergeEmailSources(existingSources = [], incomingSources = []) {
   return Array.from(byKey.values());
 }
 
+function mergeWhatsAppContacts(existingContacts = [], incomingContacts = []) {
+  const byKey = new Map();
+  for (const item of [...existingContacts, ...incomingContacts]) {
+    if (!item?.url && !item?.phone) continue;
+    byKey.set(String(item.phone || item.url).toLowerCase(), item);
+  }
+  return Array.from(byKey.values());
+}
+
 export async function upsertLeads(incomingLeads, source, user = null) {
   return mutateStore((store) => {
     const ownerId = normalizeOwnerId(user);
@@ -187,6 +196,7 @@ export async function upsertLeads(incomingLeads, source, user = null) {
         const emails = Array.from(new Set([...(existing.emails || []), ...(incoming.emails || [])]));
         const emailQuality = mergeEmailQuality(existing.emailQuality, incoming.emailQuality, emails);
         const emailSources = mergeEmailSources(existing.emailSources, incoming.emailSources);
+        const whatsappContacts = mergeWhatsAppContacts(existing.whatsappContacts, incoming.whatsappContacts);
         const searchSources = Array.from(new Set([
           ...(existing.searchSources || []),
           ...(existing.source ? [existing.source] : []),
@@ -199,6 +209,8 @@ export async function upsertLeads(incomingLeads, source, user = null) {
           emails,
           emailQuality,
           emailSources,
+          whatsappContacts,
+          whatsappVerified: Boolean(existing.whatsappVerified || incoming.whatsappVerified || whatsappContacts.length),
           tags: Array.from(new Set([...(existing.tags || []), ...(incoming.tags || [])])),
           searchSources,
           updatedAt: now

@@ -4,6 +4,7 @@ import {
   discoverContactLinks,
   discoverEmailDetails,
   extractEmailsFromHtml,
+  extractWhatsAppContactsFromHtml,
   fetchHtmlDetails
 } from './emailDiscovery.mjs';
 
@@ -34,6 +35,14 @@ function mergeEmailSources(items = []) {
   ).values());
 }
 
+function mergeWhatsAppContacts(items = []) {
+  return Array.from(new Map(
+    items
+      .filter((item) => item?.url || item?.phone)
+      .map((item) => [item.phone || item.url, item])
+  ).values());
+}
+
 function normalizeWebsite(website) {
   if (!website) return null;
   try {
@@ -47,6 +56,17 @@ function rootDomainFromUrl(website) {
   const url = normalizeWebsite(website);
   if (!url) return '';
   return url.hostname.toLowerCase().replace(/^www\./, '');
+}
+
+function classifyUrl(url) {
+  const normalized = normalizeWebsite(url);
+  if (!normalized) return { social: null, directory: null, isWhatsApp: false };
+  const hostname = normalized.hostname.toLowerCase().replace(/^www\./, '');
+  return {
+    social: socialDomains.find(([, pattern]) => pattern.test(hostname))?.[0] || null,
+    directory: directoryDomains.find(([, pattern]) => pattern.test(hostname))?.[0] || null,
+    isWhatsApp: hostname === 'wa.me' || hostname === 'wa.link' || hostname === 'whatsapp.com' || hostname.endsWith('.whatsapp.com')
+  };
 }
 
 function extractLinks(html, baseUrl) {
@@ -90,6 +110,26 @@ function step(name, status, details = {}) {
 }
 
 async function discoverFromWebsite(lead, options) {
+  const directWhatsAppContacts = extractWhatsAppContactsFromHtml(`<a href="${String(lead.website || '').replace(/"/g, '&quot;')}">WhatsApp</a>`, 'https://example.com')
+    .map((contact) => ({ ...contact, source: 'listed_website', foundAt: new Date().toISOString(), pageUrl: lead.website }));
+  if (directWhatsAppContacts.length) {
+    return {
+      result: {
+        emails: [],
+        emailSources: [],
+        whatsappContacts: directWhatsAppContacts,
+        status: 'empty',
+        pagesScanned: 0,
+        pagesAttempted: 0,
+        depth: options.emailDiscoveryDepth ?? 1
+      },
+      step: step('official_website', 'found', {
+        emailsFound: 0,
+        whatsappCount: directWhatsAppContacts.length,
+        reason: 'listed_website_is_whatsapp'
+      })
+    };
+  }
   const result = await discoverEmailDetails(lead.website, {
     maxDepth: options.emailDiscoveryDepth ?? 1,
     timeoutMs: options.timeoutMs ?? 12000
@@ -98,6 +138,7 @@ async function discoverFromWebsite(lead, options) {
     result,
     step: step('official_website', result.emails?.length ? 'found' : result.status || 'empty', {
       emailsFound: result.emails?.length || 0,
+      whatsappCount: result.whatsappContacts?.length || 0,
       pagesScanned: result.pagesScanned || 0,
       reason: result.reason?.label || ''
     })
@@ -106,27 +147,38 @@ async function discoverFromWebsite(lead, options) {
 
 async function discoverProfilesFromWebsite(lead, options) {
   const url = normalizeWebsite(lead.website);
-  if (!url) return { socialProfiles: [], directoryProfiles: [], emails: [], emailSources: [], step: step('social_and_directory_links', 'skipped', { reason: 'missing_website' }) };
+  if (!url) return { socialProfiles: [], directoryProfiles: [], emails: [], emailSources: [], whatsappContacts: [], step: step('social_and_directory_links', 'skipped', { reason: 'missing_website' }) };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 12000);
   try {
     const fetched = await fetchHtmlDetails(url.href, controller.signal);
-    if (!fetched.ok) return { socialProfiles: [], directoryProfiles: [], emails: [], emailSources: [], step: step('social_and_directory_links', 'failed', { reason: fetched.reason?.label || 'fetch_failed' }) };
+    if (!fetched.ok) return { socialProfiles: [], directoryProfiles: [], emails: [], emailSources: [], whatsappContacts: [], step: step('social_and_directory_links', 'failed', { reason: fetched.reason?.label || 'fetch_failed' }) };
     const links = extractLinks(fetched.html, url.href);
+    const currentWebsiteProfile = classifyUrl(url.href);
     const profiles = classifyExternalProfiles(links);
-    const emails = extractEmailsFromHtml(fetched.html, url.hostname, { allowPublicProvider: false });
+    if (currentWebsiteProfile.social && !profiles.socialProfiles.some((item) => item.url === url.href)) {
+      profiles.socialProfiles.unshift({ source: currentWebsiteProfile.social, url: url.href });
+    }
+    if (currentWebsiteProfile.directory && !profiles.directoryProfiles.some((item) => item.url === url.href)) {
+      profiles.directoryProfiles.unshift({ source: currentWebsiteProfile.directory, url: url.href });
+    }
+    const emails = extractEmailsFromHtml(fetched.html, url.hostname, { allowPublicProvider: Boolean(currentWebsiteProfile.social || currentWebsiteProfile.directory) });
+    const whatsappContacts = extractWhatsAppContactsFromHtml(fetched.html, url.href)
+      .map((contact) => ({ ...contact, source: currentWebsiteProfile.social || currentWebsiteProfile.directory || 'website', foundAt: new Date().toISOString(), pageUrl: url.href }));
     return {
       ...profiles,
       emails,
+      whatsappContacts,
       emailSources: emails.map((email) => ({ email, url: url.href, foundAt: new Date().toISOString(), source: 'official_website_homepage' })),
-      step: step('social_and_directory_links', profiles.socialProfiles.length || profiles.directoryProfiles.length ? 'found' : 'empty', {
+      step: step('social_and_directory_links', profiles.socialProfiles.length || profiles.directoryProfiles.length || whatsappContacts.length ? 'found' : 'empty', {
         socialCount: profiles.socialProfiles.length,
         directoryCount: profiles.directoryProfiles.length,
+        whatsappCount: whatsappContacts.length,
         contactLinks: discoverContactLinks(fetched.html, url.href).slice(0, 10)
       })
     };
   } catch (error) {
-    return { socialProfiles: [], directoryProfiles: [], emails: [], emailSources: [], step: step('social_and_directory_links', 'failed', { reason: error instanceof Error ? error.message : 'failed' }) };
+    return { socialProfiles: [], directoryProfiles: [], emails: [], emailSources: [], whatsappContacts: [], step: step('social_and_directory_links', 'failed', { reason: error instanceof Error ? error.message : 'failed' }) };
   } finally {
     clearTimeout(timer);
   }
@@ -248,6 +300,7 @@ async function runAiResearch(lead, context, settings = {}) {
       address: lead.address,
       phone: lead.phone,
       emails: context.emails,
+      whatsappContacts: context.whatsappContacts,
       socialProfiles: context.socialProfiles,
       directoryProfiles: context.directoryProfiles,
       domainInfo: context.domainInfo
@@ -282,16 +335,19 @@ export async function enrichLeadWaterfall(lead, { settings = {}, emailDiscoveryD
   const steps = [];
   const allEmails = new Set((lead.emails || []).map(normalizeEmail).filter(Boolean));
   const allSources = [...(lead.emailSources || [])];
+  const allWhatsAppContacts = [...(lead.whatsappContacts || [])];
 
   const website = await discoverFromWebsite(lead, { emailDiscoveryDepth, timeoutMs });
   steps.push(website.step);
   for (const email of website.result.emails || []) allEmails.add(normalizeEmail(email));
   allSources.push(...(website.result.emailSources || []));
+  allWhatsAppContacts.push(...(website.result.whatsappContacts || []));
 
   const profiles = await discoverProfilesFromWebsite(lead, { timeoutMs });
   steps.push(profiles.step);
   for (const email of profiles.emails || []) allEmails.add(normalizeEmail(email));
   allSources.push(...(profiles.emailSources || []));
+  allWhatsAppContacts.push(...(profiles.whatsappContacts || []));
 
   const domain = await discoverDomainInfo(lead);
   steps.push(domain.step);
@@ -313,9 +369,11 @@ export async function enrichLeadWaterfall(lead, { settings = {}, emailDiscoveryD
   allSources.push(...(thirdParty.emailSources || []));
 
   const emails = Array.from(allEmails);
+  const whatsappContacts = mergeWhatsAppContacts(allWhatsAppContacts);
   const ai = enableAiResearch
     ? await runAiResearch(lead, {
         emails,
+        whatsappContacts,
         socialProfiles: profiles.socialProfiles,
         directoryProfiles: profiles.directoryProfiles,
         domainInfo: domain.domainInfo
@@ -328,11 +386,13 @@ export async function enrichLeadWaterfall(lead, { settings = {}, emailDiscoveryD
     ...lead,
     emails,
     emailSources: mergeEmailSources(allSources),
+    whatsappContacts,
+    whatsappVerified: whatsappContacts.length > 0,
     socialProfiles: Array.from(new Map([...(lead.socialProfiles || []), ...profiles.socialProfiles].map((item) => [`${item.source}|${item.url}`, item])).values()),
     directoryProfiles: Array.from(new Map([...(lead.directoryProfiles || []), ...profiles.directoryProfiles, ...yelp.directoryProfiles, ...foursquare.directoryProfiles].map((item) => [`${item.source}|${item.url || item.name}`, item])).values()),
     domainInfo: domain.domainInfo || lead.domainInfo || null,
     aiResearch: ai.aiResearch || lead.aiResearch || null,
-    enrichmentStatus: emails.length ? 'found' : 'empty',
+    enrichmentStatus: emails.length || whatsappContacts.length ? 'found' : 'empty',
     enrichmentCheckedAt: new Date().toISOString(),
     enrichmentSteps: steps,
     emailDiscoveryStatus: emails.length ? 'found' : website.result.status || 'empty',

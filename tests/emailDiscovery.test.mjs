@@ -5,6 +5,7 @@ import {
   discoverContactLinks,
   extractCloudflareProtectedEmails,
   extractEmailsFromHtml,
+  extractWhatsAppContactsFromHtml,
   extractJsonLdEmails,
   extractMailtoEmails
 } from '../server/emailDiscovery.mjs';
@@ -45,6 +46,26 @@ test('discoverEmailDetails keeps found emails even if a later page times out', a
   assert.deepEqual(result.emails, ['info@iana.org']);
   assert.equal(result.status, 'found');
   assert.equal(result.reason, null);
+});
+
+test('discoverEmailDetails treats WhatsApp-only pages as found contact evidence', async (t) => {
+  const previousFetch = global.fetch;
+  global.fetch = async () => new Response('<a href="https://wa.me/2348012345678">WhatsApp</a>', {
+    status: 200,
+    headers: { 'Content-Type': 'text/html' }
+  });
+
+  t.after(() => {
+    global.fetch = previousFetch;
+  });
+
+  const result = await discoverEmailDetails('https://iana.org', {
+    timeoutMs: 50,
+    maxDepth: 0
+  });
+
+  assert.equal(result.status, 'found');
+  assert.equal(result.whatsappContacts[0].phone, '2348012345678');
 });
 
 test('discoverEmailDetails keeps scanning candidate pages after a page timeout', async (t) => {
@@ -111,6 +132,18 @@ test('extractJsonLdEmails reads nested email fields', () => {
   `;
 
   assert.deepEqual(extractJsonLdEmails(html, 'clinic.test'), ['frontdesk@clinic.test']);
+});
+
+test('extractWhatsAppContactsFromHtml reads wa.me and send links', () => {
+  const html = `
+    <a href="https://wa.me/2348012345678">Chat on WhatsApp</a>
+    <a href="https://api.whatsapp.com/send?phone=5491123456789&text=Hi">WhatsApp Argentina</a>
+    <a href="https://example.test/contact">Contact</a>
+  `;
+
+  const contacts = extractWhatsAppContactsFromHtml(html, 'https://acme.test');
+  assert.deepEqual(contacts.map((item) => item.phone), ['2348012345678', '5491123456789']);
+  assert.equal(contacts[0].url, 'https://wa.me/2348012345678');
 });
 
 test('discoverContactLinks returns same-domain contact-like paths from homepage', () => {

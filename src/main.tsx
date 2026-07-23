@@ -41,6 +41,8 @@ type Lead = {
   name: string;
   companyType: string;
   phone: string;
+  whatsappContacts?: Array<{ url: string; phone?: string; source?: string; foundAt?: string; pageUrl?: string; label?: string }>;
+  whatsappVerified?: boolean;
   emails: string[];
   emailQuality?: Array<{
     email: string;
@@ -592,6 +594,8 @@ function leadsToClientCsv(leads: Lead[]) {
     'name',
     'companyType',
     'phone',
+    'whatsappContactUrls',
+    'whatsappContactPhones',
     'emails',
   'emailSourceUrls',
   'emailDiscoveryReason',
@@ -612,6 +616,8 @@ function leadsToClientCsv(leads: Lead[]) {
     lead.name,
     lead.companyType,
     lead.phone,
+    (lead.whatsappContacts || []).map((item) => item.url).filter(Boolean).join('; '),
+    (lead.whatsappContacts || []).map((item) => item.phone).filter(Boolean).join('; '),
     (lead.emails || []).join('; '),
     (lead.emailSources || []).map((item) => item.url).filter(Boolean).join('; '),
     lead.emailDiscoveryReason || lead.emailDiscoveryError || '',
@@ -640,6 +646,10 @@ function getLeadSearchSources(lead: Lead) {
 
 function getEmailSourceForLead(lead: Lead, email: string) {
   return (lead.emailSources || []).find((item) => item.email.toLowerCase() === email.toLowerCase()) || null;
+}
+
+function getLeadWhatsAppContact(lead: Lead) {
+  return (lead.whatsappContacts || []).find((item) => item.phone || item.url) || null;
 }
 
 function getEmailDiscoveryReason(lead: Lead) {
@@ -1973,10 +1983,26 @@ function App() {
   }
 
   function addLeadPhoneToWhatsAppQueue(lead: Lead) {
-    const rawPhone = String(lead.phone || '').trim();
+    const confirmedContact = getLeadWhatsAppContact(lead);
+    if (confirmedContact?.url && !confirmedContact.phone) {
+      const openedWindow = window.open(confirmedContact.url, '_blank');
+      if (!openedWindow) {
+        setMessage('浏览器拦截了 WhatsApp 链接，请允许弹窗后再试。');
+        return;
+      }
+      try {
+        openedWindow.opener = null;
+      } catch {
+        // Ignore older browsers.
+      }
+      setMessage('已打开确认过的 WhatsApp 联系链接。');
+      return;
+    }
+
+    const rawPhone = String(confirmedContact?.phone || lead.phone || '').trim();
     const normalizedPhone = normalizeWhatsAppPhone(rawPhone);
     if (!normalizedPhone) {
-      setMessage('This lead does not have a usable phone number yet.');
+      setMessage('这条线索还没有可用的 WhatsApp 号码或电话。');
       return;
     }
 
@@ -1992,12 +2018,12 @@ function App() {
           name: lead.name || lead.companyType || normalizedPhone,
           phone: rawPhone,
           normalizedPhone,
-          source: lead.website || lead.address || lead.companyType || ''
+          source: confirmedContact?.url || lead.website || lead.address || lead.companyType || ''
         }
       ];
     });
     setWhatsAppExpanded(true);
-    setMessage(alreadyQueued ? 'This phone number is already in the WhatsApp queue.' : `Added ${lead.name || normalizedPhone} to the WhatsApp queue.`);
+    setMessage(alreadyQueued ? '这个号码已经在 WhatsApp 队列中。' : `已将 ${lead.name || normalizedPhone} 加入 WhatsApp 队列。`);
   }
 
   function removeWhatsAppQueueItem(itemId: string) {
@@ -3149,7 +3175,9 @@ function App() {
               </tr>
             </thead>
             <tbody>
-              {filteredLeads.map((lead) => (
+              {filteredLeads.map((lead) => {
+                const whatsappContact = getLeadWhatsAppContact(lead);
+                return (
                 <tr key={lead.id}>
                   <td data-label="商户">
                     <strong>{lead.name}</strong>
@@ -3158,6 +3186,19 @@ function App() {
                   <td data-label="类型">{lead.companyType || '-'}</td>
                   <td data-label="联系">
                     <span><Phone size={14} /> {lead.phone || '-'}</span>
+                    {whatsappContact && (
+                      <a
+                        className="whatsapp-verified-badge"
+                        href={whatsappContact.url || `https://wa.me/${whatsappContact.phone}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={whatsappContact.pageUrl || whatsappContact.url || '已确认 WhatsApp 联系方式'}
+                      >
+                        <MessageCircle size={14} />
+                        <Check size={12} />
+                        WhatsApp
+                      </a>
+                    )}
                     {Array.isArray(lead.emails) && lead.emails.length ? (
                       <div className="email-quality-list">
                         {lead.emails.map((email) => {
@@ -3219,14 +3260,15 @@ function App() {
                     <button
                       className="mini-button"
                       onClick={() => addLeadPhoneToWhatsAppQueue(lead)}
-                      disabled={!lead.phone}
-                      title={lead.phone ? 'Add this phone number to the WhatsApp queue' : 'This lead has no phone number'}
+                      disabled={!lead.phone && !whatsappContact}
+                      title={whatsappContact ? '使用已确认的 WhatsApp 联系方式' : lead.phone ? '加入 WhatsApp 队列' : '这条线索暂无电话或 WhatsApp 联系方式'}
                     >
                       <MessageCircle size={15} /> WhatsApp
                     </button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
               {!filteredLeads.length && (
                 <tr>
                   <td colSpan={6} className="empty-state">

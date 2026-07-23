@@ -38,6 +38,52 @@ test('enrichLeadWaterfall combines website emails and external profile evidence'
   assert.ok(lead.enrichmentSteps.some((item) => item.name === 'third_party_email_api' && item.status === 'skipped'));
 });
 
+test('enrichLeadWaterfall treats listed WhatsApp links as confirmed WhatsApp contacts', async () => {
+  const lead = await enrichLeadWaterfall({
+    id: 'lead-whatsapp',
+    name: 'WhatsApp Only Store',
+    website: 'https://wa.me/2348012345678',
+    emails: []
+  }, { emailDiscoveryDepth: 0, timeoutMs: 1000 });
+
+  assert.equal(lead.whatsappVerified, true);
+  assert.equal(lead.whatsappContacts[0].phone, '2348012345678');
+  assert.equal(lead.enrichmentStatus, 'found');
+  assert.ok(lead.enrichmentSteps.some((item) => item.name === 'official_website' && item.whatsappCount === 1));
+});
+
+test('enrichLeadWaterfall scans social profile websites for public email and WhatsApp links', async (t) => {
+  const previousFetch = global.fetch;
+  global.fetch = async (url) => {
+    const currentUrl = new URL(String(url));
+    if (currentUrl.hostname.endsWith('facebook.com')) {
+      return new Response(`
+        <p>Message us or email easyfixng1@gmail.com</p>
+        <a href="https://api.whatsapp.com/send?phone=2349077100044">WhatsApp</a>
+      `, {
+        status: 200,
+        headers: { 'Content-Type': 'text/html' }
+      });
+    }
+    return new Response('', { status: 404, headers: { 'Content-Type': 'text/html' } });
+  };
+  t.after(() => {
+    global.fetch = previousFetch;
+  });
+
+  const lead = await enrichLeadWaterfall({
+    id: 'lead-social',
+    name: 'Easy Fix',
+    website: 'https://www.facebook.com/easyfixng',
+    emails: []
+  }, { emailDiscoveryDepth: 0, timeoutMs: 1000 });
+
+  assert.ok(lead.emails.includes('easyfixng1@gmail.com'));
+  assert.equal(lead.socialProfiles[0].source, 'facebook');
+  assert.equal(lead.whatsappContacts[0].phone, '2349077100044');
+  assert.equal(lead.whatsappVerified, true);
+});
+
 test('enrichLeadWaterfall uses configured Foursquare, Hunter, and RDAP sources while skipping Yelp API', async (t) => {
   const previousFetch = global.fetch;
   global.fetch = async (url) => {

@@ -6,6 +6,7 @@ const MAILTO_PATTERN = /href\s*=\s*["']mailto:([^"'?#]+)(?:\?[^"']*)?["']/gi;
 const CLOUDFLARE_EMAIL_PATTERN = /(?:data-cfemail=["']|email-protection#)([a-f0-9]{6,})/gi;
 const JSON_LD_PATTERN = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
 const LINK_PATTERN = /<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+const WHATSAPP_TEXT_URL_PATTERN = /https?:\\?\/\\?\/(?:wa\.me|wa\.link|api\.whatsapp\.com|web\.whatsapp\.com|(?:www\.)?whatsapp\.com)\/[^\s"'<>)]*/gi;
 const BLOCKED_EXTENSIONS = /\.(png|jpg|jpeg|gif|webp|svg|pdf|zip|mp4|mov|avi|wmv|doc|docx|xls|xlsx)$/i;
 const MAX_PAGES = 20;
 const MAX_DISCOVERY_DEPTH = 3;
@@ -184,6 +185,52 @@ function discoveryReason(code, details = {}) {
 
 function stripTags(value) {
   return value.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeWhatsAppPhone(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const normalized = text.replace(/[^\d+]/g, '');
+  const digits = normalized.startsWith('+')
+    ? normalized.slice(1)
+    : normalized.startsWith('00')
+      ? normalized.slice(2)
+      : normalized;
+  return /^\d{7,16}$/.test(digits) ? digits : '';
+}
+
+export function parseWhatsAppContactUrl(value, baseUrl = 'https://example.com') {
+  const raw = String(value || '').trim().replace(/\\\//g, '/').replace(/&amp;/gi, '&');
+  if (!raw) return null;
+
+  let url;
+  try {
+    url = new URL(raw, baseUrl);
+  } catch {
+    return null;
+  }
+
+  const hostname = url.hostname.toLowerCase().replace(/^www\./, '');
+  const protocol = url.protocol.toLowerCase();
+  let phone = '';
+  let confirmed = false;
+
+  if (protocol === 'whatsapp:') {
+    phone = normalizeWhatsAppPhone(url.searchParams.get('phone') || url.searchParams.get('number') || '');
+    confirmed = true;
+  } else if (['wa.me', 'wa.link'].includes(hostname)) {
+    phone = normalizeWhatsAppPhone(url.pathname.split('/').filter(Boolean)[0] || '');
+    confirmed = true;
+  } else if (hostname === 'whatsapp.com' || hostname.endsWith('.whatsapp.com')) {
+    phone = normalizeWhatsAppPhone(url.searchParams.get('phone') || url.searchParams.get('number') || '');
+    confirmed = /\/send\b|\/message\b|\/channel\b/i.test(url.pathname) || Boolean(phone);
+  }
+
+  if (!confirmed) return null;
+  return {
+    url: protocol === 'whatsapp:' ? raw : url.href,
+    phone
+  };
 }
 
 function ipv4ToNumber(address) {
@@ -423,6 +470,30 @@ export function discoverContactLinks(html, baseUrl) {
   return Array.from(links);
 }
 
+export function extractWhatsAppContactsFromHtml(html, baseUrl = 'https://example.com') {
+  const contacts = new Map();
+  const addContact = (candidate, label = '') => {
+    const contact = parseWhatsAppContactUrl(candidate, baseUrl);
+    if (!contact) return;
+    const key = contact.phone || contact.url;
+    if (!contacts.has(key)) {
+      contacts.set(key, {
+        ...contact,
+        label: stripTags(label || '').slice(0, 120)
+      });
+    }
+  };
+
+  for (const match of String(html || '').matchAll(LINK_PATTERN)) {
+    addContact(match[1], match[2]);
+  }
+  for (const match of String(html || '').matchAll(WHATSAPP_TEXT_URL_PATTERN)) {
+    addContact(match[0]);
+  }
+
+  return Array.from(contacts.values());
+}
+
 function isContactLikePath(path) {
   const normalizedPath = String(path || '/').toLowerCase();
   return normalizedPath !== '/' && CONTACT_LINK_HINTS.some((hint) => normalizedPath.includes(hint.toLowerCase()));
@@ -588,6 +659,7 @@ async function fetchHtmlDetailsWithTimeout(url, timeoutMs) {
 function buildEmailDiscoveryResult({
   emails,
   sourceMap,
+  whatsappContacts = [],
   status,
   reason,
   pagesScanned,
@@ -600,6 +672,7 @@ function buildEmailDiscoveryResult({
   return {
     emails: normalizedEmails,
     emailSources: normalizedEmails.flatMap((email) => (sourceMap.get(email) || []).map((source) => ({ email, ...source }))),
+    whatsappContacts,
     status,
     reason,
     pagesScanned,
@@ -656,6 +729,7 @@ export async function discoverEmailDetails(website, { timeoutMs = DEFAULT_DISCOV
   }
 
   const found = new Set();
+  const whatsappContacts = new Map();
   const sourceMap = new Map();
   const visited = new Set();
   const queued = new Set();
@@ -709,6 +783,17 @@ export async function discoverEmailDetails(website, { timeoutMs = DEFAULT_DISCOV
       for (const email of pageEmails) {
         found.add(email);
       }
+      for (const contact of extractWhatsAppContactsFromHtml(html, url.href)) {
+        const key = contact.phone || contact.url;
+        if (!whatsappContacts.has(key)) {
+          whatsappContacts.set(key, {
+            ...contact,
+            source: 'website',
+            foundAt: new Date().toISOString(),
+            pageUrl: url.href
+          });
+        }
+      }
       if (currentDepth < depth) {
         for (const link of discoverContactLinks(html, base)) {
           if (!visited.has(link) && queue.length < pageLimit * 2) enqueue(link, currentDepth + 1);
@@ -724,8 +809,9 @@ export async function discoverEmailDetails(website, { timeoutMs = DEFAULT_DISCOV
     return buildEmailDiscoveryResult({
       emails: found,
       sourceMap,
-      status: found.size ? 'found' : 'failed',
-      reason: found.size ? null : reason,
+      whatsappContacts: Array.from(whatsappContacts.values()),
+      status: found.size || whatsappContacts.size ? 'found' : 'failed',
+      reason: found.size || whatsappContacts.size ? null : reason,
       pagesScanned,
       pagesAttempted,
       depth,
@@ -742,7 +828,8 @@ export async function discoverEmailDetails(website, { timeoutMs = DEFAULT_DISCOV
   return buildEmailDiscoveryResult({
     emails: found,
     sourceMap,
-    status: found.size ? 'found' : (pagesScanned || contactFormFound ? 'empty' : 'failed'),
+    whatsappContacts: Array.from(whatsappContacts.values()),
+    status: found.size || whatsappContacts.size ? 'found' : (pagesScanned || contactFormFound ? 'empty' : 'failed'),
     reason,
     pagesScanned,
     pagesAttempted,
