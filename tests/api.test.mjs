@@ -113,3 +113,96 @@ test('API rejects malformed lead updates, enforces campaign limits, and blocks u
   assert.equal(deliveryResponse.status, 400);
   assert.match(delivery.error, /SMTP|Jarvis|HTTPS|发送/);
 });
+
+test('search API queues long-running searches and exposes task progress', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'leadgen-api-search-'));
+  const storePath = join(directory, 'store.json');
+  const settingsPath = join(directory, 'settings.json');
+  const previousStorePath = process.env.LEADGEN_STORE_PATH;
+  const previousSettingsPath = process.env.LEADGEN_SETTINGS_PATH;
+  const previousFetch = global.fetch;
+  process.env.LEADGEN_STORE_PATH = storePath;
+  process.env.LEADGEN_SETTINGS_PATH = settingsPath;
+  await writeFile(storePath, JSON.stringify({ leads: [], searches: [], tasks: [] }, null, 2));
+  await writeFile(settingsPath, JSON.stringify({ googleMapsApiKey: 'test-key' }, null, 2));
+
+  global.fetch = async (url, init) => {
+    if (String(url).startsWith('https://places.googleapis.com/')) {
+      return new Response(JSON.stringify({
+        places: [{
+          id: 'place-queued-1',
+          displayName: { text: 'Queued Lead' },
+          formattedAddress: '1 Queue St',
+          websiteUri: 'https://queued.example',
+          nationalPhoneNumber: '555 0100'
+        }]
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    return previousFetch(url, init);
+  };
+
+  const { app } = await import('../server/index.mjs');
+  const server = await new Promise((resolve) => {
+    const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
+  });
+  const address = server.address();
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  t.after(async () => {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    global.fetch = previousFetch;
+    if (previousStorePath === undefined) delete process.env.LEADGEN_STORE_PATH;
+    else process.env.LEADGEN_STORE_PATH = previousStorePath;
+    if (previousSettingsPath === undefined) delete process.env.LEADGEN_SETTINGS_PATH;
+    else process.env.LEADGEN_SETTINGS_PATH = previousSettingsPath;
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  const registerResponse = await fetch(`${baseUrl}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'searcher@example.test', password: 'password123' })
+  });
+  const registered = await registerResponse.json();
+  const authHeaders = {
+    'Content-Type': 'application/json',
+    'X-Leadgen-Session-Token': registered.token
+  };
+
+  const searchResponse = await fetch(`${baseUrl}/api/searches`, {
+    method: 'POST',
+    headers: authHeaders,
+    body: JSON.stringify({
+      keyword: 'dentist',
+      area: 'Toronto',
+      maxResults: 1,
+      includeEmailDiscovery: false
+    })
+  });
+  const queued = await searchResponse.json();
+  assert.equal(searchResponse.status, 202);
+  assert.equal(queued.queued, true);
+  assert.equal(queued.task.status, 'queued');
+
+  let finishedTask = null;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const taskResponse = await fetch(`${baseUrl}/api/tasks/${queued.task.id}`, { headers: authHeaders });
+    const taskPayload = await taskResponse.json();
+    if (taskPayload.task.status === 'done') {
+      finishedTask = taskPayload.task;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  assert.equal(finishedTask?.status, 'done');
+  assert.equal(finishedTask.result.created, 1);
+
+  const leadsResponse = await fetch(`${baseUrl}/api/leads`, { headers: authHeaders });
+  const storePayload = await leadsResponse.json();
+  assert.equal(storePayload.leads.length, 1);
+  assert.equal(storePayload.leads[0].name, 'Queued Lead');
+});

@@ -53,6 +53,7 @@ import { validateCampaignInput, validateEmail, validateLeadPatch } from './valid
 
 const app = express();
 let campaignQueue = Promise.resolve();
+let searchTaskQueue = Promise.resolve();
 app.use(cors({ origin: config.webOrigin }));
 app.use(express.json({ limit: '8mb' }));
 app.use(express.urlencoded({ extended: false, limit: '16kb' }));
@@ -109,6 +110,12 @@ function asyncHandler(handler) {
 function enqueueCampaign(task) {
   const result = campaignQueue.then(task, task);
   campaignQueue = result.catch(() => {});
+  return result;
+}
+
+function enqueueSearchTask(task) {
+  const result = searchTaskQueue.then(task, task);
+  searchTaskQueue = result.catch(() => {});
   return result;
 }
 
@@ -230,22 +237,28 @@ function validateSearchPayload(body = {}) {
   };
 }
 
-async function executeSearchTask(searchInput, user = null) {
+async function executeSearchTask(searchInput, user = null, existingTask = null) {
   const input = {
     ...validateSearchPayload(searchInput),
     emailDiscoveryDepth: getAllowedEmailDiscoveryDepth(user, searchInput?.emailDiscoveryDepth ?? 1)
   };
   const source = `google-places:${input.keyword}:${input.area}`;
-  const task = await addTaskRecord({
+  const task = existingTask || await addTaskRecord({
     kind: 'search',
     title: '搜索商户',
-    status: 'running',
-    progress: 5,
+    status: 'queued',
+    progress: 0,
     detail: `${input.keyword} · ${input.area}`,
     context: input
   }, user);
 
   try {
+    await updateTaskRecord(task.id, {
+      status: 'running',
+      progress: 5,
+      detail: `${input.keyword} · ${input.area}`,
+      error: ''
+    });
     await consumeUsage(user, 'search_places', input.maxResults, { keyword: input.keyword, area: input.area });
     const settings = await getRuntimeSettings();
     await updateTaskRecord(task.id, { progress: 20, detail: '正在调用 Google Places' });
@@ -301,6 +314,16 @@ async function executeSearchTask(searchInput, user = null) {
       status: 'done',
       progress: 100,
       detail: `完成：新增 ${upsert.created}，更新 ${upsert.updated}`,
+      result: {
+        created: upsert.created,
+        updated: upsert.updated,
+        search: {
+          id: search.id,
+          keyword: search.keyword,
+          area: search.area,
+          nextPageToken: search.nextPageToken || ''
+        }
+      },
       completedAt: new Date().toISOString()
     });
 
@@ -321,6 +344,23 @@ async function executeSearchTask(searchInput, user = null) {
     });
     throw error;
   }
+}
+
+async function queueSearchTask(searchInput, user = null) {
+  const input = {
+    ...validateSearchPayload(searchInput),
+    emailDiscoveryDepth: getAllowedEmailDiscoveryDepth(user, searchInput?.emailDiscoveryDepth ?? 1)
+  };
+  const task = await addTaskRecord({
+    kind: 'search',
+    title: '搜索商户',
+    status: 'queued',
+    progress: 0,
+    detail: `等待执行：${input.keyword} · ${input.area}`,
+    context: input
+  }, user);
+  enqueueSearchTask(() => executeSearchTask(input, user, task));
+  return task;
 }
 
 app.get('/api/health', asyncHandler(async (_req, res) => {
@@ -608,10 +648,18 @@ app.post('/api/tasks/:id/retry', asyncHandler(async (req, res) => {
   if (task.kind !== 'search') {
     return res.status(400).json({ error: 'Only failed search tasks can be retried from the task panel.' });
   }
-  res.json({
+  const queuedTask = await queueSearchTask(task.context || {}, req.user);
+  res.status(202).json({
     retriedFrom: task.id,
-    ...(await executeSearchTask(task.context || {}, req.user))
+    queued: true,
+    task: queuedTask
   });
+}));
+
+app.get('/api/tasks/:id', asyncHandler(async (req, res) => {
+  const task = await getTaskRecord(req.params.id, req.user);
+  if (!task) return res.status(404).json({ error: 'Task not found.' });
+  res.json({ task });
 }));
 
 app.delete('/api/tasks', asyncHandler(async (req, res) => {
@@ -625,7 +673,8 @@ app.delete('/api/send-log', asyncHandler(async (_req, res) => {
 }));
 
 app.post('/api/searches', asyncHandler(async (req, res) => {
-  res.json(await executeSearchTask(req.body || {}, req.user));
+  const task = await queueSearchTask(req.body || {}, req.user);
+  res.status(202).json({ queued: true, task });
 }));
 
 app.post('/api/leads/:id/discover-email', asyncHandler(async (req, res) => {

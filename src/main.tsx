@@ -93,23 +93,32 @@ type Health = {
   emailIssues?: string[];
 };
 
+type SearchTaskResult = {
+  created: number;
+  updated: number;
+  search: { id?: string; keyword: string; area: string; nextPageToken?: string };
+};
+
+type TaskRecord = {
+  id: string;
+  kind: string;
+  title: string;
+  status: 'queued' | 'running' | 'done' | 'failed';
+  progress: number;
+  detail?: string;
+  error?: string;
+  result?: SearchTaskResult;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  context?: Record<string, unknown>;
+};
+
 type StorePayload = {
   leads: Lead[];
   searches: Array<{ id: string; keyword: string; area: string; created: number; updated: number; createdAt: string }>;
   campaigns: Array<{ id: string; subject: string; dryRun: boolean; mode: string; leadCount: number; createdAt: string }>;
-  tasks: Array<{
-    id: string;
-    kind: string;
-    title: string;
-    status: 'queued' | 'running' | 'done' | 'failed';
-    progress: number;
-    detail?: string;
-    error?: string;
-    createdAt: string;
-    updatedAt: string;
-    completedAt?: string;
-    context?: Record<string, unknown>;
-  }>;
+  tasks: TaskRecord[];
   sendLog: Array<{ id: string; leadId?: string; status: string; to?: string; reason?: string; at: string }>;
 };
 
@@ -406,11 +415,9 @@ type AreaProvince = {
   cities: AreaCity[];
 };
 
-type SearchResponse = {
-  created: number;
-  updated: number;
-  leads: Lead[];
-  search: { keyword: string; area: string; nextPageToken?: string };
+type QueuedSearchResponse = {
+  queued: true;
+  task: TaskRecord;
 };
 
 type SearchPageTarget = { area: string; token: string };
@@ -1119,6 +1126,15 @@ const api = async <T,>(path: string, init?: RequestInit): Promise<T> => {
   return data as T;
 };
 
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function mergeTaskRecords(existing: TaskRecord[], incoming: TaskRecord[]) {
+  const byId = new Map(existing.map((task) => [task.id, task]));
+  for (const task of incoming) byId.set(task.id, task);
+  return Array.from(byId.values())
+    .sort((left, right) => new Date(right.updatedAt || right.createdAt).getTime() - new Date(left.updatedAt || left.createdAt).getTime());
+}
+
 function translateKeyword(keyword: string, language: string) {
   const normalized = keyword.trim().toLowerCase();
   if (!normalized) return '';
@@ -1752,7 +1768,7 @@ function App() {
 
   function requestSearch(targetArea: string, pageToken = '') {
     const normalizedPlaceType = normalizeClientPlaceType(placeType, keyword);
-    return api<SearchResponse>('/api/searches', {
+    return api<QueuedSearchResponse>('/api/searches', {
       method: 'POST',
       body: JSON.stringify({
         keyword: searchKeyword,
@@ -1805,6 +1821,29 @@ function App() {
     setMessage('搜索策略已应用，请检查区域和数量后点击开始搜索。');
   }
 
+  async function waitForSearchTasks(taskIds: string[]) {
+    let latestTasks: TaskRecord[] = [];
+    for (let attempt = 0; attempt < 1200; attempt += 1) {
+      const taskResults = await Promise.all(taskIds.map((taskId) => api<{ task: TaskRecord }>(`/api/tasks/${taskId}`)));
+      latestTasks = taskResults.map((item) => item.task);
+      setPayload((current) => ({ ...current, tasks: mergeTaskRecords(current.tasks, latestTasks) }));
+
+      if (latestTasks.every((task) => task.status === 'done' || task.status === 'failed')) {
+        await refresh();
+        const failed = latestTasks.filter((task) => task.status === 'failed');
+        if (failed.length) {
+          throw new Error(failed.map((task) => task.error || task.detail || '搜索任务失败').join('；'));
+        }
+        return latestTasks;
+      }
+
+      const running = latestTasks.find((task) => task.status === 'running') || latestTasks[0];
+      setMessage(`搜索任务后台执行中：${Math.min(100, Math.max(0, Number(running.progress) || 0))}% ${running.detail || ''}`);
+      await wait(1500);
+    }
+    throw new Error('搜索任务仍在后台执行，请稍后刷新任务面板查看结果。');
+  }
+
   async function runSearch() {
     setBusy('search');
     setMessage('');
@@ -1812,33 +1851,24 @@ function App() {
     try {
       const targets = areaTargets.length ? areaTargets : [area.trim()].filter(Boolean);
       if (!targets.length) throw new Error('请先选择或输入搜索区域。');
-      if (targets.length > 1) {
-        let created = 0;
-        let updated = 0;
-        let latestLeads: Lead[] = payload.leads;
-        const nextPages: SearchPageTarget[] = [];
-
-        for (const targetArea of targets) {
-          const result = await requestSearch(targetArea);
-          created += result.created;
-          updated += result.updated;
-          latestLeads = result.leads;
-          if (result.search.nextPageToken) nextPages.push({ area: targetArea, token: result.search.nextPageToken });
-        }
-
-        setPayload((current) => ({ ...current, leads: latestLeads }));
-        setPageTargets(nextPages);
-        setMessage(`本次使用关键词“${searchKeyword}”，搜索 ${targets.length} 个区域，新增 ${created} 条，更新 ${updated} 条线索。`);
-        await refresh();
-        setActiveLeadKeyword(normalizeSearchKeyword(searchKeyword));
-        return;
+      const queuedTasks: TaskRecord[] = [];
+      for (const targetArea of targets) {
+        const result = await requestSearch(targetArea);
+        queuedTasks.push(result.task);
       }
+      setPayload((current) => ({ ...current, tasks: mergeTaskRecords(current.tasks, queuedTasks) }));
+      setMessage(`已加入后台搜索队列：${queuedTasks.length} 个任务。可以留在本页查看进度。`);
 
-      const result = await requestSearch(targets[0]);
-      setPayload((current) => ({ ...current, leads: result.leads }));
-      setPageTargets(result.search.nextPageToken ? [{ area: targets[0], token: result.search.nextPageToken }] : []);
-      setMessage(`本次使用关键词“${searchKeyword}”，新增 ${result.created} 条，更新 ${result.updated} 条线索。`);
-      await refresh();
+      const finishedTasks = await waitForSearchTasks(queuedTasks.map((task) => task.id));
+      const created = finishedTasks.reduce((sum, task) => sum + (task.result?.created || 0), 0);
+      const updated = finishedTasks.reduce((sum, task) => sum + (task.result?.updated || 0), 0);
+      const nextPages = finishedTasks.flatMap((task) => {
+        const nextPageToken = task.result?.search?.nextPageToken || '';
+        const targetArea = task.result?.search?.area || String(task.context?.area || '');
+        return nextPageToken && targetArea ? [{ area: targetArea, token: nextPageToken }] : [];
+      });
+      setPageTargets(nextPages);
+      setMessage(`后台搜索完成：本次使用关键词“${searchKeyword}”，搜索 ${targets.length} 个区域，新增 ${created} 条，更新 ${updated} 条线索。`);
       setActiveLeadKeyword(normalizeSearchKeyword(searchKeyword));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '搜索失败');
@@ -1852,21 +1882,23 @@ function App() {
     setBusy('search-more');
     setMessage('');
     try {
-      let created = 0;
-      let updated = 0;
-      let latestLeads = payload.leads;
-      const nextPages: SearchPageTarget[] = [];
+      const queuedTasks: TaskRecord[] = [];
       for (const page of pageTargets) {
         const result = await requestSearch(page.area, page.token);
-        created += result.created;
-        updated += result.updated;
-        latestLeads = result.leads;
-        if (result.search.nextPageToken) nextPages.push({ area: page.area, token: result.search.nextPageToken });
+        queuedTasks.push(result.task);
       }
-      setPayload((current) => ({ ...current, leads: latestLeads }));
+      setPayload((current) => ({ ...current, tasks: mergeTaskRecords(current.tasks, queuedTasks) }));
+      setMessage(`已加入后台加载队列：${queuedTasks.length} 个任务。`);
+      const finishedTasks = await waitForSearchTasks(queuedTasks.map((task) => task.id));
+      const created = finishedTasks.reduce((sum, task) => sum + (task.result?.created || 0), 0);
+      const updated = finishedTasks.reduce((sum, task) => sum + (task.result?.updated || 0), 0);
+      const nextPages = finishedTasks.flatMap((task) => {
+        const nextPageToken = task.result?.search?.nextPageToken || '';
+        const targetArea = task.result?.search?.area || String(task.context?.area || '');
+        return nextPageToken && targetArea ? [{ area: targetArea, token: nextPageToken }] : [];
+      });
       setPageTargets(nextPages);
-      setMessage(`下一页加载完成：新增 ${created} 条，更新 ${updated} 条线索。`);
-      await refresh();
+      setMessage(`下一页后台加载完成：新增 ${created} 条，更新 ${updated} 条线索。`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '加载下一页失败');
     } finally {
@@ -1878,14 +1910,17 @@ function App() {
     setBusy(`retry-task:${taskId}`);
     setMessage('');
     try {
-      const result = await api<SearchResponse & { retriedFrom: string }>(`/api/tasks/${taskId}/retry`, {
+      const result = await api<QueuedSearchResponse & { retriedFrom: string }>(`/api/tasks/${taskId}/retry`, {
         method: 'POST'
       });
-      setPayload((current) => ({ ...current, leads: result.leads }));
-      setPageTargets(result.search.nextPageToken ? [{ area: result.search.area, token: result.search.nextPageToken }] : []);
-      setActiveLeadKeyword(normalizeSearchKeyword(result.search.keyword));
-      setMessage(`重试完成：新增 ${result.created} 条，更新 ${result.updated} 条线索。`);
-      await refresh();
+      setPayload((current) => ({ ...current, tasks: mergeTaskRecords(current.tasks, [result.task]) }));
+      setMessage('已重新加入后台搜索队列。');
+      const [finishedTask] = await waitForSearchTasks([result.task.id]);
+      const nextPageToken = finishedTask.result?.search?.nextPageToken || '';
+      const targetArea = finishedTask.result?.search?.area || String(finishedTask.context?.area || '');
+      setPageTargets(nextPageToken && targetArea ? [{ area: targetArea, token: nextPageToken }] : []);
+      if (finishedTask.result?.search?.keyword) setActiveLeadKeyword(normalizeSearchKeyword(finishedTask.result.search.keyword));
+      setMessage(`重试完成：新增 ${finishedTask.result?.created || 0} 条，更新 ${finishedTask.result?.updated || 0} 条线索。`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '任务重试失败');
     } finally {
